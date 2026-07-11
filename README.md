@@ -1,172 +1,123 @@
 # OmniStudio
 
-A high-performance, cross-platform desktop application designed for local image and video synthesis using state-of-the-art diffusion models. Powered by a PyQt6 frontend and a PyTorch/Diffusers backend, OmniStudio provides a completely offline, private environment for neural generation.
+A high-performance, cross-platform desktop application for local AI image, video, and text generation. Built on top of PyTorch and Hugging Face Diffusers, OmniStudio provides a secure, fully offline environment for neural network inference with a sleek, hardware-accelerated UI powered by PyQt6.
 
----
+## Architecture and Killer Features
 
-## Technical Architecture and Features
+OmniStudio is engineered to bridge the gap between complex machine learning pipelines and consumer-grade desktop hardware. 
 
-OmniStudio is engineered to bridge the gap between high-performance neural computing and native desktop application architecture.
-
-- **Offline Processing Pipeline**: 100% local computation. No telemetry, external API reliance, or remote data sharing.
-- **Asynchronous Execution Queue**: The PyQt6 GUI and neural engine run on decoupled threads. Long-running model loads and generation steps are handled by background workers (`QThread`), preventing UI freeze states.
-- **Dynamic Model Allocation**: Supports direct integration with the Hugging Face Hub. Includes an integrated downloader (`fetch_hf_models.py`) capable of caching and running FLUX.1, Stable Diffusion (1.5, XL), and various video architectures.
-- **Memory Optimization and Attention Patching**: Dynamically manages CPU/GPU memory. Integrates custom overrides to handle PyInstaller compatibility bugs with newer PyTorch versions (such as `flex_attention` version checks).
-- **Extensible Addon Pipeline**: Native support for hot-loading LoRA weights and integrating ControlNet guidance (e.g., Canny edge, depth mapping).
-- **Interactive Masking Canvas**: Built-in graphics scene (`QGraphicsScene`) for inpainting and image-to-image workflows, allowing users to draw pixel-perfect mask overlays.
-- **Real-Time Latent Previews**: Decodes latents during the generation process using a customized VAE decoder pipeline, sending previews to the UI without blocking inference.
-- **Automated Text Processing**: 
-  - Integrated translation module using MarianMT (`Helsinki-NLP/opus-mt-ru-en`) to automatically translate prompts to English.
-  - Prompt expansion using Gustavosta/MagicPrompt-Stable-Diffusion to generate highly detailed prompts from short descriptions.
-- **ADetailer Module**: Built-in face detection and enhancement utilizing OpenCV Haar Cascades and localized inpainting to restore facial features.
-- **Hardware Telemetry**: Real-time monitoring of host CPU utilization and system memory (VRAM/RAM) footprint.
-
----
-
-## Technical Specifications & Implementations
-
-### VRAM and Memory Management
-OmniStudio dynamically configures PyTorch and Diffusers pipelines to run on consumer-grade GPUs:
-- **Low VRAM Mode**: Integrates model CPU offloading (`enable_model_cpu_offload`), VAE slicing (`enable_vae_slicing`), and attention slicing (`enable_attention_slicing`).
-- **Medium VRAM Mode**: Uses model CPU offloading and attention slicing to fit larger models like FLUX.1 or SDXL on mid-range GPUs (e.g., 8 GB VRAM).
-- **Quantization Support**: Utilizes BitsAndBytes to load weights in 4-bit and 8-bit precision on CUDA devices.
-- **Memory Allocation**: Forces bfloat16 and balanced device mapping for large networks (e.g., Z-Image pipelines) to prevent Out-Of-Memory (OOM) errors.
-
-### Supported Generation Workflows
-- **Text-to-Image / Image-to-Image**: Standard diffusion pipelines with dynamic scheduler swaps (Euler, Euler a, DPM++ 2M Karras, DPM++ 2S a, DPM2, DDIM, Heun).
-- **Inpainting**: Custom `DrawingScene` captures white mask overlays on a black background, passing them alongside the initialized image to the inpainting pipeline.
-- **Video Generation**: Generates high-fidelity MP4 files using Stable Video Diffusion and I2VGen-XL pipelines. Decodes chunks iteratively (`decode_chunk_size=8`) and exports them using custom frame-rate mapping.
-- **Image Upscaling**: Native super-resolution upscaling up to 4x using pre-trained EDSR models (`edsr-base`).
-- **Text Generation**: Text pipeline support for running local LLMs (e.g., Llama, Gemma, Phi) with customizable system prompts, temperature controls, and token limits.
-
----
+- **Zero-Cloud Local Inference**: 100% offline execution. No telemetry, no API rate limits, and total data privacy.
+- **Dynamic VRAM Management**: Implements aggressive memory optimization techniques to run massive models (e.g., FLUX.1, SDXL) on mid-range GPUs (>= 8GB VRAM).
+  - Includes CPU Offloading (`enable_model_cpu_offload`), VAE slicing, and attention slicing.
+  - Native support for 8-bit and 4-bit model quantization via `bitsandbytes`.
+  - Dynamic `torch.bfloat16` and `torch.float16` precision mapping based on host capabilities.
+- **Multi-Modal Generation Pipelines**:
+  - **Image Synthesis**: Support for standard Stable Diffusion, SDXL, and FLUX architectures with hot-swappable schedulers (Euler a, DPM++ 2M Karras, DDIM, etc.).
+  - **Video Generation**: Integrated Stable Video Diffusion (SVD) and I2VGen-XL. Utilizes iterative chunk decoding (`decode_chunk_size=8`) to prevent Out-Of-Memory exceptions during high-fidelity MP4 compilation.
+  - **Inpainting Workspace**: A custom `QGraphicsScene`-based mask editor allowing pixel-perfect local redrawing over existing images.
+  - **Super-Resolution**: Native upscaling (up to 4x) utilizing pre-trained EDSR (`edsr-base`) networks.
+  - **Local LLM Engine**: Transformers-based text generation supporting models like Llama, Gemma, and Phi with strict context limits and temperature controls.
+- **AI-Assisted Prompt Engineering**:
+  - **Real-Time Translation**: Embedded MarianMT (`Helsinki-NLP/opus-mt-ru-en`) for transparent Russian-to-English prompt translation.
+  - **Prompt Expansion**: Integrated `Gustavosta/MagicPrompt-Stable-Diffusion` to extrapolate complex, highly detailed scene descriptions from minimal user input.
+- **ADetailer Face Restoration**: Automated facial detection using OpenCV Haar Cascades. Automatically isolates faces, runs localized inpainting, and seamlessly composites the restored features back into the base image.
+- **Hardware Telemetry**: Real-time system monitoring. Tracks CPU thread utilization, physical RAM footprints, and dedicated VRAM allocation via `psutil` and `pynvml`.
+- **Asynchronous Compute Engine**: Strict decoupling of the Qt main thread from PyTorch operations using specialized `QThread` workers (ModelLoadWorker, GenerationWorker, LiveGenerationWorker) ensuring a fluid UI during maximum load.
 
 ## System Requirements
 
 - **Operating System**: Windows 10/11 (64-bit) or macOS (12.0+).
-- **Hardware Acceleration**: 
-  - Recommended: NVIDIA GPU with CUDA support and at least 8 GB of VRAM (necessary for stable FLUX.1 or SDXL inference).
-  - Minimum: 4 GB VRAM for Stable Diffusion 1.5 or lighter text models.
-- **System Memory**: 16 GB RAM minimum.
-- **Storage**: ~2.5 GB for the base installation + variable space for downloaded model weights (e.g., 6 GB for SDXL checkpoints).
-
----
+- **GPU (Recommended)**: NVIDIA GPU with CUDA support and >= 8 GB VRAM.
+- **GPU (Minimum)**: >= 4 GB VRAM (restricted to SD 1.5 or lightweight models).
+- **System RAM**: 16 GB minimum.
+- **Storage**: ~2.5 GB for the base engine + allocated space for checkpoint weights.
 
 ## Installation and Deployment
 
-### Windows (Pre-compiled Binary)
-The simplest way to deploy the application on Windows without requiring a Python environment:
-1. Navigate to [Releases](../../releases) and download the installer (`OmniStudio_Setup.exe`).
-2. Run the installer to configure shortcuts and paths automatically.
-3. Launch the application, set your Hugging Face Access Token in Settings, and download a model to begin.
-
-*A portable standalone archive is also available via `OmniStudio_Portable.zip`.*
+### Windows (Compiled Binary)
+1. Navigate to the Releases section and download the installer (`OmniStudio_Setup.exe`).
+2. Run the installer to unpack the isolated Python environment and dependencies.
+3. Launch OmniStudio, configure your Hugging Face Access Token in the settings, and download your target models.
 
 ### macOS / Linux (From Source)
-To run the project in a development or Unix environment:
-1. Download the source package `OmniStudio_Source_Mac.zip` or clone the repository.
-2. Initialize a virtual environment and install the required dependencies:
+1. Clone the repository or download `OmniStudio_Source_Mac.zip`.
+2. Initialize the virtual environment:
    ```bash
    python -m venv .venv
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
-3. Run the primary entry point:
+3. Execute the primary entry point:
    ```bash
    python main_mac.py
    ```
 
----
-
 ## Technical Stack
 
-- **Frontend / UI**: PyQt6, styled with customized QSS (Qt Style Sheets) and custom widgets (ToggleSwitch, ClickableLabel, AnimatedTabBar).
-- **AI / Compute Engine**: PyTorch, Hugging Face Diffusers, Hugging Face Transformers, Accelerate, SuperImage.
-- **Packaging Tools**: PyInstaller, Inno Setup Compiler.
+- **Frontend**: PyQt6, QSS (Qt Style Sheets).
+- **Core ML**: PyTorch, Hugging Face Diffusers, Transformers, Accelerate.
+- **Vision**: OpenCV, PIL.
+- **Packaging**: PyInstaller, Inno Setup Compiler.
 
----
 ---
 
 # OmniStudio (На русском)
 
-Высокопроизводительное кроссплатформенное десктопное приложение для локального синтеза изображений и видео с использованием современных диффузионных моделей. Благодаря фронтенду на PyQt6 и бэкенду на PyTorch/Diffusers, OmniStudio предоставляет полностью автономную и конфиденциальную среду для нейросетевой генерации.
+Высокопроизводительное кроссплатформенное десктопное приложение для локального синтеза изображений, видео и текста с использованием современных диффузионных моделей. Благодаря фронтенду на PyQt6 и бэкенду на PyTorch/Diffusers, OmniStudio предоставляет полностью автономную, конфиденциальную и защищенную среду для нейросетевой генерации.
 
----
+## Архитектура и ключевые возможности (Killer Features)
 
-## Архитектура и функциональные возможности
+OmniStudio разработан с целью обеспечить работу тяжелых ML-моделей на пользовательском оборудовании среднего сегмента.
 
-OmniStudio разработан с целью объединить высокую производительность нейросетевых вычислений и отзывчивость нативного десктопного интерфейса.
-
-- **Локальный пайплайн вычислений**: 100% локальное выполнение задач. Никакой телеметрии, зависимости от облачных API или передачи пользовательских данных во внешние сети.
-- **Асинхронная очередь выполнения**: Потоки GUI PyQt6 и нейросетевого движка полностью изолированы. Загрузка тяжелых весов моделей и шаги деноизинга обрабатываются фоновыми воркерами (`QThread`), что исключает блокировку интерфейса.
-- **Динамический менеджмент моделей**: Прямая интеграция с Hugging Face Hub. Встроенный загрузчик (`fetch_hf_models.py`) обеспечивает автоматическое кэширование и запуск моделей FLUX.1, Stable Diffusion (1.5, XL) и специализированных видеоархитектур.
-- **Оптимизация памяти**: Автоматический контроль распределения ресурсов памяти CPU/GPU. Интегрированы патчи для обхода несовместимостей PyInstaller с последними релизами PyTorch (в частности, исправление проверок версий для модуля `flex_attention`).
-- **Интеграция LoRA и ControlNet**: Поддержка "горячего" подключения весов LoRA и обработки направляющих изображений через ControlNet (Canny, Depth и др.).
-- **Интерактивный графический Canvas**: Специализированный модуль холста на базе `QGraphicsScene` для задач Inpainting (дорисовки) и Image-to-Image с возможностью попиксельного создания масок.
-- **Отрисовка промежуточных шагов**: Декодирование латентов в реальном времени с помощью кастомного пайплайна VAE для отправки превью-изображений на графический интерфейс без прерывания процесса инференса.
-- **Автоматическая обработка текста**:
-  - Модуль автоматического перевода русскоязычных промптов на английский язык с помощью локальной модели MarianMT (`Helsinki-NLP/opus-mt-ru-en`).
-  - Улучшение и расширение коротких промптов с помощью модели Gustavosta/MagicPrompt-Stable-Diffusion.
-- **Модуль ADetailer**: Встроенное детектирование лиц с использованием каскадов Хаара OpenCV и последующим локальным инпейнтингом для детализации и улучшения мимики.
-- **Телеметрия железа**: Мониторинг утилизации ресурсов центрального процессора и оперативной/видеопамяти в реальном времени.
-
----
-
-## Техническая реализация и оптимизация
-
-### Управление VRAM и памятью
-Приложение динамически адаптирует параметры работы PyTorch и Diffusers для видеокарт различной мощности:
-- **Low VRAM**: Принудительно подключает выгрузку модулей на CPU (`enable_model_cpu_offload`), слайсинг VAE (`enable_vae_slicing`) и покадровый слайсинг внимания (`enable_attention_slicing`).
-- **Medium VRAM**: Активирует выгрузку модулей на CPU и слайсинг внимания для работы с тяжелыми моделями уровня FLUX.1 и SDXL на графических картах среднего сегмента (от 8 ГБ VRAM).
-- **Квантование весов**: Поддерживает загрузку моделей в режиме 4-bit и 8-bit на CUDA-устройствах с использованием библиотеки BitsAndBytes.
-- **Аллокация ресурсов**: Форсирует точность вычислений bfloat16 и сбалансированное распределение тензоров по устройствам для предотвращения ошибок нехватки памяти (OOM) на сложных архитектурах.
-
-### Поддерживаемые рабочие процессы
-- **Text-to-Image / Image-to-Image**: Стандартные пайплайны генерации с возможностью динамической смены планировщиков (Euler, Euler a, DPM++ 2M Karras, DPM++ 2S a, DPM2, DDIM, Heun).
-- **Inpainting (Дорисовка)**: Кастомный класс `DrawingScene` переносит координаты маски на бинарную карту (черно-белую маску), которая передается инпейнт-пайплайну вместе с исходным кадром.
-- **Генерация видео**: Создание MP4-видеороликов с использованием Stable Video Diffusion и I2VGen-XL. Декодирование кадров происходит блоками (`decode_chunk_size=8`) с оптимизацией частоты кадров.
-- **Апскейлинг изображений**: Встроенное масштабирование до 4x с использованием предобученных EDSR-моделей (`edsr-base`).
-- **Генерация текста**: Поддержка запуска локальных LLM-моделей (Llama, Gemma, Phi) с обработкой системных промптов, температурных коэффициентов и лимитов вывода.
-
----
+- **Локальный пайплайн вычислений**: 100% локальное выполнение задач. Никакой телеметрии, зависимости от облачных API или передачи данных во внешние сети.
+- **Динамическое управление VRAM**: Применение агрессивных методов оптимизации памяти для запуска массивных моделей (FLUX.1, SDXL) на видеокартах с 8 ГБ видеопамяти.
+  - Поддержка CPU Offloading, VAE Slicing и Attention Slicing.
+  - Нативная интеграция 8-битной и 4-битной квантизации весов через `bitsandbytes`.
+  - Динамическое распределение точности (`torch.bfloat16` / `torch.float16`) в зависимости от архитектуры GPU.
+- **Мультимодальные пайплайны**:
+  - **Генерация изображений**: Поддержка Stable Diffusion, SDXL и FLUX с возможностью горячей замены планировщиков (Euler a, DPM++ 2M Karras, DDIM и др.).
+  - **Генерация видео**: Интеграция Stable Video Diffusion (SVD) и I2VGen-XL. Использование фрагментированного декодирования (`decode_chunk_size=8`) для предотвращения ошибок Out-Of-Memory при рендеринге MP4 в высоком разрешении.
+  - **Inpainting**: Встроенный графический редактор на базе `QGraphicsScene` для пиксельно-точного рисования масок поверх существующих изображений и локальной перерисовки.
+  - **Апскейлинг**: Нативное увеличение разрешения (до 4x) с использованием предобученных сетей EDSR (`edsr-base`).
+  - **Локальный LLM-движок**: Генерация текста на базе библиотеки Transformers с поддержкой моделей Llama, Gemma и Phi.
+- **AI-ассистент для написания промптов**:
+  - **Автоматический перевод**: Интегрированная модель MarianMT (`Helsinki-NLP/opus-mt-ru-en`) для прозрачного перевода запросов с русского на английский язык в реальном времени.
+  - **Расширение промпта (MagicPrompt)**: Интеграция `Gustavosta/MagicPrompt-Stable-Diffusion` для автоматического дополнения коротких пользовательских описаний до высокодетализированных профессиональных промптов.
+- **ADetailer (Реставрация лиц)**: Автоматический детектор лиц на базе OpenCV Haar Cascades. Система автоматически находит лица на сгенерированном изображении, применяет локальный inpainting для устранения артефактов и бесшовно вклеивает восстановленное лицо обратно.
+- **Аппаратная телеметрия**: Мониторинг состояния системы в реальном времени. Отслеживание загрузки потоков CPU, использования физической RAM и выделенной видеопамяти VRAM через `psutil` и `pynvml`.
+- **Асинхронное ядро вычислений**: Строгое разделение главного потока интерфейса Qt и вычислительных задач PyTorch через специализированные `QThread` (ModelLoadWorker, GenerationWorker). Это гарантирует плавность UI даже при максимальной загрузке видеокарты.
 
 ## Системные требования
 
-- **Операционная система**: Windows 10/11 (64-bit) или macOS (12.0+).
-- **Графический ускоритель (GPU)**: 
-  - Рекомендуется: NVIDIA с поддержкой CUDA и объемом VRAM от 8 ГБ (необходимо для инференса FLUX.1 и SDXL).
-  - Минимально: 4 ГБ VRAM для работы со Stable Diffusion 1.5 или компактными LLM.
-- **Оперативная память**: Не менее 16 ГБ RAM.
-- **Дисковое пространство**: ~2.5 ГБ под файлы приложения + место для хранения весов моделей (например, ~6 ГБ на одну модель SDXL).
+- **ОС**: Windows 10/11 (64-bit) или macOS (12.0+).
+- **GPU (Рекомендуется)**: Видеокарта NVIDIA с поддержкой CUDA и объемом VRAM от 8 ГБ.
+- **GPU (Минимум)**: от 4 ГБ VRAM (только для SD 1.5 и легких моделей).
+- **Оперативная память**: Минимум 16 ГБ RAM.
+- **Диск**: ~2.5 ГБ для базовой среды + дополнительное место под веса загружаемых моделей.
 
----
+## Установка и развертывание
 
-## Инструкция по установке
+### Windows (Скомпилированный установщик)
+1. Перейдите в раздел Releases и скачайте установщик (`OmniStudio_Setup.exe`).
+2. Запустите установщик. Он автоматически распакует изолированную среду Python и все необходимые зависимости.
+3. Запустите OmniStudio, введите свой Hugging Face Access Token в настройках и скачайте нужные модели для начала работы.
 
-### Windows (Сборка)
-1. Перейдите в раздел [Releases](../../releases) и скачайте `OmniStudio_Setup.exe`.
-2. Запустите установщик для автоматического развертывания ярлыков и необходимых компонентов.
-3. Откройте приложение, укажите Hugging Face Access Token в настройках и выберите модель для загрузки.
-
-*Дополнительно доступна портативная версия без установки: `OmniStudio_Portable.zip`.*
-
-### macOS / Linux (Запуск из исходного кода)
-1. Скачайте архив с исходным кодом `OmniStudio_Source_Mac.zip` или клонируйте репозиторий.
-2. Создайте виртуальное окружение и установите зависимости:
+### macOS / Linux (Из исходников)
+1. Склонируйте репозиторий или скачайте архив `OmniStudio_Source_Mac.zip`.
+2. Создайте виртуальную среду:
    ```bash
    python -m venv .venv
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
-3. Запустите основную точку входа:
+3. Запустите основное приложение:
    ```bash
    python main_mac.py
    ```
 
----
+## Технологический стек (Technical Stack)
 
-## Используемый стек
-
-- **Интерфейс**: PyQt6, стилизованный через кастомные QSS-таблицы, а также специализированные компоненты (ToggleSwitch, ClickableLabel, AnimatedTabBar).
-- **Вычисления**: PyTorch, Hugging Face Diffusers, Hugging Face Transformers, Accelerate, SuperImage.
-- **Инструменты сборки**: PyInstaller, компилятор Inno Setup.
+- **Frontend**: PyQt6, QSS (Qt Style Sheets).
+- **Core ML**: PyTorch, Hugging Face Diffusers, Transformers, Accelerate.
+- **Vision**: OpenCV, PIL.
+- **Сборка**: PyInstaller, Inno Setup Compiler.
