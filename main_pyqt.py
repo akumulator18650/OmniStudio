@@ -29,7 +29,10 @@ def custom_excepthook(exc_type, exc_value, exc_traceback):
 
 sys.excepthook = custom_excepthook
 
-BASE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = getattr(sys, '_MEIPASS', os.path.join(os.path.dirname(sys.executable), '_internal'))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def get_asset_path(*paths):
     return os.path.join(BASE_DIR, *paths)
