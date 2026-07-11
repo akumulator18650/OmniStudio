@@ -18,7 +18,7 @@ OmniStudio is engineered to bridge the gap between complex machine learning pipe
   - **Super-Resolution**: Native upscaling (up to 4x) utilizing pre-trained EDSR (`edsr-base`) networks.
   - **Local LLM Engine**: Transformers-based text generation supporting models like Llama, Gemma, and Phi with strict context limits and temperature controls.
 - **AI-Assisted Prompt Engineering**:
-  - **Real-Time Translation**: Embedded MarianMT (`Helsinki-NLP/opus-mt-ru-en`) for transparent Russian-to-English prompt translation.
+  - **Real-Time Translation**: Embedded MarianMT (`Helsinki-NLP/opus-mt-ru-en`) for transparent to English prompt translation.
   - **Prompt Expansion**: Integrated `Gustavosta/MagicPrompt-Stable-Diffusion` to extrapolate complex, highly detailed scene descriptions from minimal user input.
 - **ADetailer Face Restoration**: Automated facial detection using OpenCV Haar Cascades. Automatically isolates faces, runs localized inpainting, and seamlessly composites the restored features back into the base image.
 - **Hardware Telemetry**: Real-time system monitoring. Tracks CPU thread utilization, physical RAM footprints, and dedicated VRAM allocation via `psutil` and `pynvml`.
@@ -63,9 +63,9 @@ OmniStudio is engineered to bridge the gap between complex machine learning pipe
 
 # OmniStudio (На русском)
 
-Высокопроизводительное кроссплатформенное десктопное приложение для локального синтеза изображений, видео и текста с использованием современных диффузионных моделей. Благодаря фронтенду на PyQt6 и бэкенду на PyTorch/Diffusers, OmniStudio предоставляет полностью автономную, конфиденциальную и защищенную среду для нейросетевой генерации.
+Кроссплатформенное десктопное приложение для локальной генерации изображений, видео и текста с использованием моделей. Благодаря фронтенду на PyQt6 и бэкенду на PyTorch/Diffusers, OmniStudio предоставляет полностью автономную, конфиденциальную и защищенную среду для нейросетевой генерации.
 
-## Архитектура и ключевые возможности (Killer Features)
+## Архитектура и ключевые возможности
 
 OmniStudio разработан с целью обеспечить работу тяжелых ML-моделей на пользовательском оборудовании среднего сегмента.
 
