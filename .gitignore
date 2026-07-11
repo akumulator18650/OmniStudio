@@ -1,0 +1,42 @@
+# Python virtual environments
+.venv/
+.venv_backup/
+venv/
+ENV/
+
+# Python compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build & packaging directories
+build/
+dist/
+*.spec
+*.exe
+*.zip
+*.bat
+
+# Local application data and output folders
+models/
+outputs/
+Output/
+crash.log
+chats.json
+config.json
+qr_tmp.png
+.env
+
+# IDE configurations
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS metadata
+.DS_Store
+Thumbs.db

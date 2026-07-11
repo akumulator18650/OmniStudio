@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ImageStudio Mobile</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="glass-nav">
+        <div class="nav-item active" onclick="switchTab('generate')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            Генерация
+        </div>
+        <div class="nav-item" onclick="switchTab('gallery')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Галерея
+        </div>
+    </nav>
+
+    <main>
+        <!-- ТАБ ГЕНЕРАЦИИ -->
+        <section id="tab-generate" class="tab-content active">
+            <div class="glass-panel">
+                <label>Модель</label>
+                <select id="model-select" class="premium-input"></select>
+            </div>
+
+            <div class="glass-panel">
+                <label>Промпт</label>
+                <textarea id="prompt" class="premium-input" placeholder="Опишите, что вы хотите увидеть..." rows="4"></textarea>
+                
+                <label style="margin-top: 15px;">Негативный промпт</label>
+                <textarea id="negative_prompt" class="premium-input" placeholder="Чего не должно быть на фото..." rows="2"></textarea>
+            </div>
+
+            <div class="glass-panel">
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <label>Шаги (Steps)</label>
+                        <span id="steps-val">30</span>
+                    </div>
+                    <input type="range" id="steps" min="1" max="100" value="30" oninput="document.getElementById('steps-val').innerText=this.value">
+                </div>
+
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <label>Креативность (CFG)</label>
+                        <span id="cfg-val">7.0</span>
+                    </div>
+                    <input type="range" id="cfg" min="10" max="300" value="70" oninput="document.getElementById('cfg-val').innerText=(this.value/10).toFixed(1)">
+                </div>
+
+                <div class="slider-group">
+                    <label>Разрешение</label>
+                    <select id="resolution" class="premium-input">
+                        <option value="512x512">512 x 512 (1:1)</option>
+                        <option value="512x768">512 x 768 (2:3)</option>
+                        <option value="768x512">768 x 512 (3:2)</option>
+                        <option value="720x1280">720 x 1280 (9:16)</option>
+                        <option value="1280x720">1280 x 720 (16:9)</option>
+                        <option value="1024x1024">1024 x 1024 (SDXL)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button id="generate-btn" class="glow-button" onclick="startGeneration()">
+                <span>СГЕНЕРИРОВАТЬ</span>
+                <div class="loader" style="display: none;"></div>
+            </button>
+
+            <!-- Зона прогресса / результата -->
+            <div id="progress-container" class="glass-panel" style="display: none; margin-top: 20px;">
+                <div class="status-header">
+                    <span id="status-text">Запуск...</span>
+                    <span id="percent-text">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                    <div id="progress-bar-fill" class="progress-bar-fill"></div>
+                </div>
+            </div>
+
+            <div id="result-container" class="glass-panel" style="display: none; margin-top: 20px; text-align: center;">
+                <img id="result-img" src="" alt="Result" style="max-width: 100%; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            </div>
+            
+            <div style="height: 100px;"></div> <!-- Spacer -->
+        </section>
+
+        <!-- ТАБ ГАЛЕРЕИ -->
+        <section id="tab-gallery" class="tab-content">
+            <div id="gallery-grid" class="gallery-grid"></div>
+            <div style="height: 100px;"></div> <!-- Spacer -->
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

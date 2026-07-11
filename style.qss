@@ -1,0 +1,258 @@
+/* style.qss */
+QMainWindow {
+    background-color: #000000;
+    color: #E0E0E0;
+    font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+}
+
+QWidget {
+    font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+    background-color: transparent;
+}
+
+QLabel {
+    color: #E0E0E0;
+    font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+}
+
+/* Glass Panels */
+#glassPanel, #glassInput {
+    background-color: rgba(25, 25, 25, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+}
+
+#glassChip {
+    background-color: rgba(25, 25, 25, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: white;
+}
+
+#navBar {
+    border-radius: 23px;
+    background-color: #0F0F0F;
+}
+
+#glassInput {
+    background-color: rgba(15, 15, 15, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+}
+
+#glassChip {
+    background-color: rgba(30, 30, 30, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 6px 12px;
+    color: #E0E0E0;
+    font-size: 11px;
+    font-weight: bold;
+}
+#glassChip:hover {
+    background-color: rgba(50, 50, 50, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+QPushButton {
+    background-color: transparent;
+    color: #E0E0E0;
+    font-weight: bold;
+    border-radius: 8px;
+    padding: 8px;
+    font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+}
+
+QPushButton:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+QPushButton:pressed {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* New Chat Button */
+QPushButton#newChatBtn {
+    background-color: rgba(20, 20, 20, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 20px;
+    color: #E0E0E0;
+    font-weight: normal;
+}
+QPushButton#newChatBtn:hover {
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    background-color: rgba(30, 30, 30, 0.9);
+}
+
+/* Animated Tab Buttons */
+QPushButton.NavBtn {
+    background-color: transparent;
+    color: #A0A0A0;
+    font-weight: bold;
+    border: none;
+    border-radius: 15px;
+    font-size: 15px;
+}
+QPushButton.NavBtn:checked {
+    color: #000000;
+}
+
+/* Primary/Send Buttons */
+QPushButton#primaryButton {
+    background-color: #FFFFFF;
+    color: #000000;
+    border-radius: 12px;
+    font-weight: bold;
+}
+
+QPushButton#primaryButton:hover {
+    background-color: #E0E0E0;
+}
+
+/* Text Inputs (Lora Font) */
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background-color: transparent;
+    border: none;
+    color: #E0E0E0;
+    font-size: 15px;
+    padding: 10px;
+    font-family: 'Lora', 'Segoe UI', Arial, serif;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+    outline: none;
+}
+
+/* Scrollbars */
+QScrollArea {
+    border: none;
+    background-color: transparent;
+}
+
+QScrollBar:vertical {
+    border: none;
+    background: transparent;
+    width: 6px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: rgba(255, 255, 255, 0.2);
+    min-height: 20px;
+    border-radius: 3px;
+}
+QScrollBar::handle:vertical:hover {
+    background: rgba(255, 255, 255, 0.4);
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    border: none;
+    background: transparent;
+    height: 6px;
+    margin: 0px;
+}
+QScrollBar::handle:horizontal {
+    background: rgba(255, 255, 255, 0.2);
+    min-width: 20px;
+    border-radius: 3px;
+}
+
+/* Progress Bar */
+QProgressBar {
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    text-align: center;
+    background-color: #121212;
+    color: white;
+}
+QProgressBar::chunk {
+    background-color: #FFFFFF;
+    border-radius: 4px;
+}
+
+/* Combo Box */
+QComboBox {
+    background-color: #0A0A0A;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #E0E0E0;
+    padding: 10px 15px;
+    font-family: 'Lora', 'Segoe UI', Arial, serif;
+    font-size: 15px;
+}
+QComboBox::drop-down { 
+    border: none; 
+    padding-right: 10px;
+}
+QComboBox QAbstractItemView {
+    background-color: #0A0A0A;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #E0E0E0;
+    selection-background-color: rgba(255, 255, 255, 0.1);
+    font-family: 'Lora', 'Segoe UI', Arial, serif;
+    font-size: 15px;
+    border-radius: 8px;
+    outline: none;
+}
+QComboBox QAbstractItemView::item {
+    padding: 10px;
+}
+
+/* Sliders */
+QSlider::groove:horizontal {
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    height: 6px;
+    background: #121212;
+    border-radius: 3px;
+}
+QSlider::sub-page:horizontal {
+    background: #FFFFFF;
+    border-radius: 3px;
+}
+QSlider::handle:horizontal {
+    background: #FFFFFF;
+    border: 1px solid #808080;
+    width: 14px;
+    height: 14px;
+    margin: -4px 0;
+    border-radius: 7px;
+}
+
+/* Lists (Lora Font) */
+QListWidget {
+    background-color: transparent;
+    border: none;
+    outline: none;
+    font-family: 'Lora', 'Segoe UI', Arial, serif;
+}
+QListWidget::item {
+    padding: 2px 5px;
+    border-radius: 8px;
+    color: #E0E0E0;
+}
+QListWidget::item:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+QListWidget::item:selected {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: #FFFFFF;
+}
+
+/* Chat Bubbles (Lora Font for text) */
+#chatBubbleUser {
+    background-color: rgba(40, 40, 40, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 18px;
+}
+#chatBubbleAI {
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+#chatBubbleUser QLabel, #chatBubbleAI QLabel {
+    font-family: 'Lora', 'Segoe UI', Arial, serif;
+}
