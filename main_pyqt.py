@@ -19,12 +19,58 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPropertyAnimat
 from PyQt6.QtGui import QPixmap, QIcon, QImage, QPainter, QFont, QFontDatabase, QFontMetrics, qAlpha, QKeySequence, QAction
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
+def setup_logging():
+    app_data_dir = os.path.join(os.path.expanduser("~"), "OmniStudioData")
+    os.makedirs(app_data_dir, exist_ok=True)
+    log_file = os.path.join(app_data_dir, "omnistudio.log")
+    try:
+        # Clear log if it gets larger than 10MB
+        if os.path.exists(log_file) and os.path.getsize(log_file) > 10 * 1024 * 1024:
+            os.remove(log_file)
+    except Exception:
+        pass
+
+    class LogRedirector:
+        def __init__(self, filename, original_stream):
+            self.filename = filename
+            self.original_stream = original_stream
+
+        def write(self, message):
+            self.original_stream.write(message)
+            try:
+                with open(self.filename, "a", encoding="utf-8") as f:
+                    f.write(message)
+            except Exception:
+                pass
+
+        def flush(self):
+            self.original_stream.flush()
+
+        def isatty(self):
+            return hasattr(self.original_stream, "isatty") and self.original_stream.isatty()
+
+    sys.stdout = LogRedirector(log_file, sys.stdout)
+    sys.stderr = LogRedirector(log_file, sys.stderr)
+    print(f"Logging initialized. Log file: {log_file}")
+
+setup_logging()
+
 def custom_excepthook(exc_type, exc_value, exc_traceback):
     import traceback
     with open("crash.log", "a", encoding="utf-8") as f:
         f.write("UNHANDLED EXCEPTION:\n")
         traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
         f.write("-" * 50 + "\n")
+    # Also duplicate to main log
+    app_data_dir = os.path.join(os.path.expanduser("~"), "OmniStudioData")
+    log_file = os.path.join(app_data_dir, "omnistudio.log")
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write("CRITICAL CRASH:\n")
+            traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
+            f.write("-" * 50 + "\n")
+    except Exception:
+        pass
     sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
 sys.excepthook = custom_excepthook
