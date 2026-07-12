@@ -24,7 +24,7 @@ class AIEngine:
         self.device = 'cpu'
         self.sampler_name = 'DPM++ 2M Karras'
         self.translator = None
-        self.models_dir = os.path.join(os.getcwd(), 'models')
+        self.models_dir = os.path.join(os.path.expanduser('~'), 'OmniStudioData', 'models')
         self.current_lora_id = None
         os.makedirs(self.models_dir, exist_ok=True)
 
