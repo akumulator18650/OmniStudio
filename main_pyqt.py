@@ -1,16 +1,6 @@
 import os
 import sys
 
-if getattr(sys, 'frozen', False):
-    try:
-        base_dir = getattr(sys, '_MEIPASS', os.path.join(os.path.dirname(sys.executable), '_internal'))
-        os.add_dll_directory(base_dir)
-        # Also add PyQt6/Qt6/bin explicitly just in case __init__.py fails
-        qt_bin = os.path.join(base_dir, 'PyQt6', 'Qt6', 'bin')
-        if os.path.exists(qt_bin):
-            os.add_dll_directory(qt_bin)
-    except Exception:
-        pass
 from dotenv import load_dotenv
 
 load_dotenv()
