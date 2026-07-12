@@ -23,3 +23,13 @@ Name: "{autodesktop}\OmniStudio"; Filename: "{app}\OmniStudio.exe"; Tasks: deskt
 
 [Run]
 Filename: "{app}\OmniStudio.exe"; Description: "{cm:LaunchProgram,OmniStudio}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  // Force close any running instances of OmniStudio to prevent file locking
+  Exec('taskkill', '/F /IM OmniStudio.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
