@@ -2,6 +2,11 @@
 
 A high-performance, cross-platform desktop application for local AI image, video, and text generation. Built on top of PyTorch and Hugging Face Diffusers, OmniStudio provides a secure, fully offline environment for neural network inference with a sleek, hardware-accelerated UI powered by PyQt6.
 
+<p align="center">
+  <img src="assets/screenshots/chat.png" width="48%" alt="Chat Interface" />
+  <img src="assets/screenshots/models.png" width="48%" alt="Models Management" />
+</p>
+
 ## Architecture and Killer Features
 
 OmniStudio is engineered to bridge the gap between complex machine learning pipelines and consumer-grade desktop hardware. 
@@ -64,6 +69,11 @@ OmniStudio is engineered to bridge the gap between complex machine learning pipe
 # OmniStudio (На русском)
 
 Кроссплатформенное десктопное приложение для локальной генерации изображений, видео и текста с использованием моделей. Благодаря фронтенду на PyQt6 и бэкенду на PyTorch/Diffusers, OmniStudio предоставляет полностью автономную, конфиденциальную и защищенную среду для нейросетевой генерации.
+
+<p align="center">
+  <img src="assets/screenshots/chat.png" width="48%" alt="Интерфейс чата" />
+  <img src="assets/screenshots/models.png" width="48%" alt="Управление моделями" />
+</p>
 
 ## Архитектура и ключевые возможности
 
