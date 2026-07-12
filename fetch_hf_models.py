@@ -31,6 +31,8 @@ def _fetch_page(pipeline_tag, skip):
         r = requests.get(url, timeout=TIMEOUT)
         if r.status_code == 200:
             return r.json()
+        else:
+            print(f"  [API ERROR] status={r.status_code} for tag={pipeline_tag}, response={r.text[:200]}")
     except Exception as e:
         print(f"  request failed (skip={skip}, tag={pipeline_tag}): {e}")
     return None
@@ -38,7 +40,7 @@ def _fetch_page(pipeline_tag, skip):
 def _fetch_actual_size_gb(model_id):
     url = f"https://huggingface.co/api/models/{model_id}/tree/main"
     try:
-        r = requests.get(url, timeout=15)
+        r = requests.get(url, timeout=10)
         if r.status_code == 200:
             files = r.json()
             # Filter files that look like weights
@@ -58,6 +60,8 @@ def _fetch_actual_size_gb(model_id):
                 size_gb = total_bytes / (1024**3)
                 if size_gb > 0.1:
                     return round(size_gb, 1)
+        elif r.status_code == 429:
+            print(f"  [Rate Limit] Tree API rate limited for {model_id}")
     except Exception as e:
         print(f"  [API Size Info] Could not fetch tree for {model_id}: {e}")
     return None
@@ -95,17 +99,13 @@ def _image_entry(m):
     model_id = m["id"]
     name = model_id.split("/")[-1].replace("-", " ").title()
     
-    # Get actual size from Hugging Face tree API
-    size_gb = _fetch_actual_size_gb(model_id)
-    
-    if size_gb is None:
-        # Fallback to heuristics
-        if "stable-diffusion-xl" in tags or "sdxl" in model_id.lower() or "xl" in model_id.lower():
-            size_gb = 6.5
-        elif "flux" in model_id.lower():
-            size_gb = 12.0
-        else:
-            size_gb = 4.0
+    # Do not fetch actual size via API for image models to save API requests
+    if "stable-diffusion-xl" in tags or "sdxl" in model_id.lower() or "xl" in model_id.lower():
+        size_gb = 6.5
+    elif "flux" in model_id.lower():
+        size_gb = 12.0
+    else:
+        size_gb = 4.0
             
     # Classify requirements based on size
     if size_gb >= 11.0:
@@ -126,21 +126,17 @@ def _video_entry(m):
     name = model_id.split("/")[-1].replace("-", " ").title()
     mid = model_id.lower()
     
-    # Get actual size from Hugging Face tree API
-    size_gb = _fetch_actual_size_gb(model_id)
-    
-    if size_gb is None:
-        # Fallback to heuristics
-        if "i2vgen" in mid or "stable-video" in mid:
-            size_gb = 15.0
-        elif "cogvideo" in mid or "videoworld" in mid:
-            size_gb = 12.0
-        elif "ltx-video" in mid or "ltxv" in mid:
-            size_gb = 6.0
-        elif "animatediff" in mid:
-            size_gb = 5.0
-        else:
-            size_gb = 10.0
+    # Do not fetch actual size via API for video models to save API requests
+    if "i2vgen" in mid or "stable-video" in mid:
+        size_gb = 15.0
+    elif "cogvideo" in mid or "videoworld" in mid:
+        size_gb = 12.0
+    elif "ltx-video" in mid or "ltxv" in mid:
+        size_gb = 6.0
+    elif "animatediff" in mid:
+        size_gb = 5.0
+    else:
+        size_gb = 10.0
             
     if size_gb >= 14.0:
         req = "GPU: VRAM 14GB+"
@@ -199,9 +195,10 @@ def _text_entry(m):
             "safety": "NSFW" if _is_nsfw(m) else "SFW", "type": "Text"}
 
 def fetch_top_models():
+    from concurrent.futures import ThreadPoolExecutor
     formatted_models = {"sfw": [], "nsfw": [], "video": [], "text": []}
 
-    # 1. Image models — paginate until both SFW and NSFW reach PER_LIST (or exhausted)
+    # 1. Image models
     print("Fetching image models from Hugging Face (text-to-image)...")
     img_sfw_done = img_nsfw_done = False
     skip = 0
@@ -210,33 +207,39 @@ def fetch_top_models():
         if not page:
             break
         skip += len(page)
-        if len(page) < PAGE:  # last page
-            last = True
-        else:
-            last = False
+        last = len(page) < PAGE
+        
         seen = _seen_ids(formatted_models)
+        raw_candidates = []
         for m in page:
             model_id = m.get("id")
             if not model_id or model_id in seen:
                 continue
             if "diffusers" not in m.get("tags", []):
                 continue
-            entry = _image_entry(m)
-            if entry["safety"] == "NSFW":
-                if len(formatted_models["nsfw"]) < PER_LIST:
-                    formatted_models["nsfw"].append(entry)
-                    seen.add(model_id)
-            else:
-                if len(formatted_models["sfw"]) < PER_LIST:
-                    formatted_models["sfw"].append(entry)
-                    seen.add(model_id)
+            raw_candidates.append(m)
+            seen.add(model_id) # Prevent duplicate checking in this page
+            
+        # Process candidates in parallel
+        if raw_candidates:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                entries = list(executor.map(_image_entry, raw_candidates))
+                
+            for entry in entries:
+                if entry["safety"] == "NSFW":
+                    if len(formatted_models["nsfw"]) < PER_LIST:
+                        formatted_models["nsfw"].append(entry)
+                else:
+                    if len(formatted_models["sfw"]) < PER_LIST:
+                        formatted_models["sfw"].append(entry)
+                        
         img_sfw_done = len(formatted_models["sfw"]) >= PER_LIST
         img_nsfw_done = len(formatted_models["nsfw"]) >= PER_LIST
         if last:
             break
     print(f"  image: SFW={len(formatted_models['sfw'])}, NSFW={len(formatted_models['nsfw'])}")
 
-    # 2. Video models — fill SFW and NSFW buckets independently (NSFW is scarce on HF)
+    # 2. Video models
     print("Fetching video models from Hugging Face (text-to-video)...")
     vid_sfw = vid_nsfw = 0
     skip = 0
@@ -246,27 +249,35 @@ def fetch_top_models():
             break
         skip += len(page)
         last = len(page) < PAGE
+        
         seen = _seen_ids(formatted_models)
+        raw_candidates = []
         for m in page:
             model_id = m.get("id")
             if not model_id or model_id in seen:
                 continue
-            entry = _video_entry(m)
-            if entry["safety"] == "NSFW":
-                if vid_nsfw < PER_LIST:
-                    formatted_models["video"].append(entry)
-                    seen.add(model_id)
-                    vid_nsfw += 1
-            else:
-                if vid_sfw < PER_LIST:
-                    formatted_models["video"].append(entry)
-                    seen.add(model_id)
-                    vid_sfw += 1
+            raw_candidates.append(m)
+            seen.add(model_id)
+            
+        if raw_candidates:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                entries = list(executor.map(_video_entry, raw_candidates))
+                
+            for entry in entries:
+                if entry["safety"] == "NSFW":
+                    if vid_nsfw < PER_LIST:
+                        formatted_models["video"].append(entry)
+                        vid_nsfw += 1
+                else:
+                    if vid_sfw < PER_LIST:
+                        formatted_models["video"].append(entry)
+                        vid_sfw += 1
+                        
         if (vid_sfw >= PER_LIST and vid_nsfw >= PER_LIST) or last:
             break
     print(f"  video: SFW={vid_sfw}, NSFW={vid_nsfw}")
 
-    # 3. Text models — fill SFW and NSFW buckets independently
+    # 3. Text models
     print("Fetching text models from Hugging Face (text-generation)...")
     txt_sfw = txt_nsfw = 0
     skip = 0
@@ -276,22 +287,30 @@ def fetch_top_models():
             break
         skip += len(page)
         last = len(page) < PAGE
+        
         seen = _seen_ids(formatted_models)
+        raw_candidates = []
         for m in page:
             model_id = m.get("id")
             if not model_id or model_id in seen:
                 continue
-            entry = _text_entry(m)
-            if entry["safety"] == "NSFW":
-                if txt_nsfw < PER_LIST:
-                    formatted_models["text"].append(entry)
-                    seen.add(model_id)
-                    txt_nsfw += 1
-            else:
-                if txt_sfw < PER_LIST:
-                    formatted_models["text"].append(entry)
-                    seen.add(model_id)
-                    txt_sfw += 1
+            raw_candidates.append(m)
+            seen.add(model_id)
+            
+        if raw_candidates:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                entries = list(executor.map(_text_entry, raw_candidates))
+                
+            for entry in entries:
+                if entry["safety"] == "NSFW":
+                    if txt_nsfw < PER_LIST:
+                        formatted_models["text"].append(entry)
+                        txt_nsfw += 1
+                else:
+                    if txt_sfw < PER_LIST:
+                        formatted_models["text"].append(entry)
+                        txt_sfw += 1
+                        
         if (txt_sfw >= PER_LIST and txt_nsfw >= PER_LIST) or last:
             break
     print(f"  text: SFW={txt_sfw}, NSFW={txt_nsfw}")
