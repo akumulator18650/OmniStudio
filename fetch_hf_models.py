@@ -35,19 +35,88 @@ def _fetch_page(pipeline_tag, skip):
         print(f"  request failed (skip={skip}, tag={pipeline_tag}): {e}")
     return None
 
+def _fetch_actual_size_gb(model_id):
+    url = f"https://huggingface.co/api/models/{model_id}/tree/main"
+    try:
+        r = requests.get(url, timeout=15)
+        if r.status_code == 200:
+            files = r.json()
+            # Filter files that look like weights
+            weight_files = [
+                f for f in files 
+                if f.get('type') == 'file' 
+                and any(f.get('path', '').endswith(ext) for ext in ('.safetensors', '.bin', '.pt', '.gguf'))
+            ]
+            if weight_files:
+                # Prioritize safetensors to avoid counting both formats if present
+                safetensors = [f for f in weight_files if f.get('path', '').endswith('.safetensors')]
+                if safetensors:
+                    total_bytes = sum(f.get('size', 0) for f in safetensors)
+                else:
+                    total_bytes = sum(f.get('size', 0) for f in weight_files)
+                
+                size_gb = total_bytes / (1024**3)
+                if size_gb > 0.1:
+                    return round(size_gb, 1)
+    except Exception as e:
+        print(f"  [API Size Info] Could not fetch tree for {model_id}: {e}")
+    return None
+
+def _get_author_and_desc(model_id, type_name):
+    author = model_id.split('/')[0]
+    mid = model_id.lower()
+    
+    # Map common authors and quantized variations to original authors
+    if author.lower() in ("nvidia", "huggingface", "hardware-accelerated"):
+        if "gemma" in mid:
+            author = "Google (квантованная NVIDIA)"
+        elif "llama" in mid:
+            author = "Meta (квантованная NVIDIA)"
+        elif "nemotron" in mid:
+            author = "NVIDIA"
+        elif "qwen" in mid:
+            author = "Alibaba Qwen (квантованная NVIDIA)"
+    elif author.lower() == "huihui-ai" and "llama" in mid:
+        author = "Meta (модификация huihui-ai)"
+    elif author.lower() == "optimum-intel-internal-testing":
+        author = "Intel Testing"
+    
+    if type_name == "photo":
+        desc = f"Модель генерации изображений от {author}."
+    elif type_name == "video":
+        desc = f"Видео-модель от {author}."
+    else:
+        desc = f"Текстовая нейросеть (LLM) от {author}."
+        
+    return author, desc
+
 def _image_entry(m):
     tags = m.get("tags", [])
     model_id = m["id"]
     name = model_id.split("/")[-1].replace("-", " ").title()
-    if "stable-diffusion-xl" in tags or "sdxl" in model_id.lower() or "xl" in model_id.lower():
-        model_class, req, size_gb = "Next-Gen", "GPU: VRAM 8GB+", 6.5
-        desc = f"Тяжелая SDXL модель от {model_id.split('/')[0]}."
-    elif "flux" in model_id.lower():
-        model_class, req, size_gb = "Next-Gen", "GPU: VRAM 12GB+", 12.0
-        desc = f"Сверхтяжелая Flux модель от {model_id.split('/')[0]}."
+    
+    # Get actual size from Hugging Face tree API
+    size_gb = _fetch_actual_size_gb(model_id)
+    
+    if size_gb is None:
+        # Fallback to heuristics
+        if "stable-diffusion-xl" in tags or "sdxl" in model_id.lower() or "xl" in model_id.lower():
+            size_gb = 6.5
+        elif "flux" in model_id.lower():
+            size_gb = 12.0
+        else:
+            size_gb = 4.0
+            
+    # Classify requirements based on size
+    if size_gb >= 11.0:
+        model_class, req = "Next-Gen", "GPU: VRAM 12GB+"
+    elif size_gb >= 6.0:
+        model_class, req = "Next-Gen", "GPU: VRAM 8GB+"
     else:
-        model_class, req, size_gb = "Стандарт", "GPU: VRAM 6GB+", 4.0
-        desc = f"Обычная SD 1.5/2.1 модель от {model_id.split('/')[0]}."
+        model_class, req = "Стандарт", "GPU: VRAM 6GB+"
+        
+    _, desc = _get_author_and_desc(model_id, "photo")
+    
     return {"name": name, "id": model_id, "desc": desc, "size_gb": size_gb,
             "req": req, "load_class": model_class,
             "safety": "NSFW" if _is_nsfw(m) else "SFW", "type": "Photo"}
@@ -56,18 +125,34 @@ def _video_entry(m):
     model_id = m["id"]
     name = model_id.split("/")[-1].replace("-", " ").title()
     mid = model_id.lower()
-    if "i2vgen" in mid or "stable-video" in mid:
-        req, size_gb = "GPU: VRAM 14GB+", 15.0
-    elif "cogvideo" in mid or "videoworld" in mid:
-        req, size_gb = "GPU: VRAM 12GB+", 12.0
-    elif "ltx-video" in mid or "ltxv" in mid:
-        req, size_gb = "GPU: VRAM 8GB+", 6.0
-    elif "animatediff" in mid:
-        req, size_gb = "GPU: VRAM 8GB+", 5.0
+    
+    # Get actual size from Hugging Face tree API
+    size_gb = _fetch_actual_size_gb(model_id)
+    
+    if size_gb is None:
+        # Fallback to heuristics
+        if "i2vgen" in mid or "stable-video" in mid:
+            size_gb = 15.0
+        elif "cogvideo" in mid or "videoworld" in mid:
+            size_gb = 12.0
+        elif "ltx-video" in mid or "ltxv" in mid:
+            size_gb = 6.0
+        elif "animatediff" in mid:
+            size_gb = 5.0
+        else:
+            size_gb = 10.0
+            
+    if size_gb >= 14.0:
+        req = "GPU: VRAM 14GB+"
+    elif size_gb >= 10.0:
+        req = "GPU: VRAM 12GB+"
     else:
-        req, size_gb = "GPU: VRAM 12GB+", 10.0
+        req = "GPU: VRAM 8GB+"
+        
+    _, desc = _get_author_and_desc(model_id, "video")
+    
     return {"name": name, "id": model_id,
-            "desc": f"Видео-модель от {model_id.split('/')[0]}.",
+            "desc": desc,
             "size_gb": size_gb, "req": req, "load_class": "Видео",
             "safety": "NSFW" if _is_nsfw(m) else "SFW", "type": "Video"}
 
@@ -75,21 +160,42 @@ def _text_entry(m):
     model_id = m["id"]
     name = model_id.split("/")[-1].replace("-", " ").title()
     mid = model_id.lower()
-    if "70b" in mid or "72b" in mid:
-        req, size_gb = "GPU: VRAM 24GB+", 60.0
-    elif "30b" in mid or "32b" in mid or "34b" in mid or "qwq" in mid or "glm-4.7-flash" in mid:
-        req, size_gb = "GPU: VRAM 16GB+", 25.0
-    elif "14b" in mid or "13b" in mid:
-        req, size_gb = "GPU: VRAM 16GB+", 26.0
-    elif "7b" in mid or "8b" in mid or "9b" in mid or "glm-4-9b" in mid:
-        req, size_gb = "GPU: VRAM 8GB+", 15.0
-    elif "1b" in mid or "1.5b" in mid or "3b" in mid or "mini" in mid:
-        req, size_gb = "GPU: VRAM 4GB+", 4.0
+    
+    # Get actual size from Hugging Face tree API
+    size_gb = _fetch_actual_size_gb(model_id)
+    
+    if size_gb is None:
+        # Fallback to heuristics (improved with regex parameter matching)
+        import re
+        match = re.search(r'(\d+(?:\.\d+)?)[b]', mid)
+        if match:
+            params = float(match.group(1))
+            is_quantized = any(q in mid for q in ("fp4", "nvfp4", "int4", "q4", "awq", "gptq", "gguf"))
+            is_fp8 = any(q in mid for q in ("fp8", "int8", "q8"))
+            if is_quantized:
+                size_gb = max(1.0, params * 0.6)
+            elif is_fp8:
+                size_gb = max(1.0, params * 1.0)
+            else:
+                size_gb = max(1.5, params * 2.0)
+        else:
+            size_gb = 14.0
+            
+    # Classify requirements based on size
+    if size_gb >= 35.0:
+        req = "GPU: VRAM 24GB+"
+    elif size_gb >= 20.0:
+        req = "GPU: VRAM 16GB+"
+    elif size_gb >= 10.0:
+        req = "GPU: VRAM 8GB+"
     else:
-        req, size_gb = "GPU: VRAM 8GB+", 14.0
+        req = "GPU: VRAM 4GB+"
+        
+    _, desc = _get_author_and_desc(model_id, "text")
+    
     return {"name": name, "id": model_id,
-            "desc": f"Текстовая нейросеть (LLM) от {model_id.split('/')[0]}.",
-            "size_gb": size_gb, "req": req, "load_class": "Текст",
+            "desc": desc,
+            "size_gb": round(size_gb, 1), "req": req, "load_class": "Текст",
             "safety": "NSFW" if _is_nsfw(m) else "SFW", "type": "Text"}
 
 def fetch_top_models():
