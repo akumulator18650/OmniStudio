@@ -13,7 +13,17 @@ def main() -> None:
 
     print("Building OmniStudio...")
     subprocess.check_call(
-        [sys.executable, "-m", "PyInstaller", "--noconfirm", SPEC_FILE],
+        [
+            sys.executable, "-m", "PyInstaller",
+            "--noconfirm",
+            "--onedir",
+            "--windowed",
+            "--name=OmniStudio",
+            "--add-data", f"assets{os.pathsep}assets",
+            "--add-data", f"style.qss{os.pathsep}.",
+            "--add-data", f"web{os.pathsep}web",
+            "main_pyqt.py"
+        ],
         cwd=PROJECT_DIR,
     )
 
