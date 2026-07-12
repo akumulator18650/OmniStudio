@@ -8,6 +8,14 @@ except:
 from dotenv import load_dotenv
 load_dotenv()
 import os
+
+# Set Hugging Face cache directories to OmniStudioData/models
+app_data_dir = os.path.join(os.path.expanduser("~"), "OmniStudioData")
+models_dir = os.path.join(app_data_dir, "models")
+os.makedirs(models_dir, exist_ok=True)
+os.environ["HF_HOME"] = models_dir
+os.environ["HF_HUB_CACHE"] = models_dir
+
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 import torch
 if hasattr(torch, 'set_num_threads'):
