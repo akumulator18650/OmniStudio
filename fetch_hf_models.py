@@ -77,11 +77,11 @@ def _text_entry(m):
     mid = model_id.lower()
     if "70b" in mid or "72b" in mid:
         req, size_gb = "GPU: VRAM 24GB+", 60.0
-    elif "32b" in mid or "34b" in mid or "qwq" in mid:
-        req, size_gb = "GPU: VRAM 24GB+", 40.0
+    elif "30b" in mid or "32b" in mid or "34b" in mid or "qwq" in mid or "glm-4.7-flash" in mid:
+        req, size_gb = "GPU: VRAM 16GB+", 25.0
     elif "14b" in mid or "13b" in mid:
         req, size_gb = "GPU: VRAM 16GB+", 26.0
-    elif "7b" in mid or "8b" in mid:
+    elif "7b" in mid or "8b" in mid or "9b" in mid or "glm-4-9b" in mid:
         req, size_gb = "GPU: VRAM 8GB+", 15.0
     elif "1b" in mid or "1.5b" in mid or "3b" in mid or "mini" in mid:
         req, size_gb = "GPU: VRAM 4GB+", 4.0
