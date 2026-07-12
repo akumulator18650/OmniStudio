@@ -325,6 +325,10 @@ class AIEngine:
     def unload_model(self):
         self.pipe = None
         self.current_model_id = None
+        if hasattr(self, 'llm_pipeline'):
+            self.llm_pipeline = None
+        if hasattr(self, 'current_text_model_id'):
+            self.current_text_model_id = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         import gc
