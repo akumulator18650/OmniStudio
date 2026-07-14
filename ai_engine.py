@@ -61,6 +61,18 @@ class AIEngine:
         # Moving it again breaks CPU offloading and causes slowdowns
 
     def load_model(self, model_id: str, precision: str='fp16', vram_mode: str='high', controlnet_id: str=None):
+        if model_id == "rembg":
+            try:
+                import rembg
+                self.current_model_id = model_id
+                self.current_controlnet_id = None
+                self.pipe = "rembg"
+                print("rembg tool selected")
+                return True
+            except ImportError:
+                print("rembg is not installed")
+                return False
+                
         if self.current_model_id == model_id and getattr(self, 'current_controlnet_id', None) == controlnet_id and self.pipe is not None:
             return True
         try:
@@ -279,7 +291,7 @@ class AIEngine:
                     print("Klein model detected, skipping CPU offload to prevent wrapper_CUDA_mm bug")
                     if not is_8bit and not is_4bit:
                         self.pipe = self.pipe.to(self.device)
-                elif vram_mode == 'low':
+                elif vram_mode != 'No Limit':
                     try:
                         self.pipe.enable_model_cpu_offload()
                     except AttributeError:
@@ -345,12 +357,35 @@ class AIEngine:
     def delete_model(self, model_id: str) -> bool:
         if self.current_model_id == model_id:
             self.unload_model()
+        if getattr(self, "current_text_model_id", None) == model_id:
+            self.unload_model()
+            
         import shutil
+        import stat
+        
+        def remove_readonly(func, path, _):
+            try:
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+            except:
+                pass
+
         safe_name = model_id.replace('/', '--')
         folder_path = os.path.join(self.models_dir, f'models--{safe_name}')
+        
+        if not os.path.exists(folder_path):
+            file_path = os.path.join(self.models_dir, model_id)
+            if os.path.exists(file_path) and os.path.isfile(file_path):
+                try:
+                    os.remove(file_path)
+                    return True
+                except Exception as e:
+                    print(f'Error deleting file {file_path}: {e}')
+                    return False
+                    
         if os.path.exists(folder_path):
             try:
-                shutil.rmtree(folder_path)
+                shutil.rmtree(folder_path, onerror=remove_readonly)
                 return True
             except Exception as e:
                 print(f'Error deleting model {model_id}: {e}')
@@ -778,8 +813,8 @@ class AIEngine:
             print(f'ADetailer error: {e}')
             return img
 
-    def load_text_model(self, model_id: str, precision: str='fp16'):
-        print(f"Loading text model {model_id}...")
+    def load_text_model(self, model_id: str, precision: str='fp16', vram_limit: str='8GB'):
+        print(f"Loading text model {model_id} with VRAM limit {vram_limit}...")
         self.current_text_model_id = model_id
         import torch
         from transformers import pipeline
@@ -787,35 +822,79 @@ class AIEngine:
         dtype = torch.float16 if precision == 'fp16' else torch.float32
         model_kwargs = {'cache_dir': self.models_dir}
         
+        device_map_val = None
+        if vram_limit != 'No Limit':
+            device_map_val = 'auto'
+            # Adjust VRAM limit slightly to leave room for overhead
+            safe_vram = {
+                '4GB': '3GB', '6GB': '5GB', '8GB': '7GB', 
+                '12GB': '10GB', '16GB': '14GB', '24GB': '22GB'
+            }.get(vram_limit, vram_limit)
+            model_kwargs['max_memory'] = {0: safe_vram, "cpu": "16GB"}
+            
+        gguf_file = None
+        import os
+        model_path = os.path.join(self.models_dir, f"models--{model_id.replace('/', '--')}")
+        if os.path.exists(model_path):
+            for f in os.listdir(model_path):
+                if f.endswith('.gguf'):
+                    gguf_file = f
+                    break
+            
+            if not gguf_file:
+                snapshots_dir = os.path.join(model_path, 'snapshots')
+                if os.path.exists(snapshots_dir) and os.listdir(snapshots_dir):
+                    snap = os.listdir(snapshots_dir)[0]
+                    snap_path = os.path.join(snapshots_dir, snap)
+                    for f in os.listdir(snap_path):
+                        if f.endswith('.gguf'):
+                            gguf_file = f
+                            break
+                        
+        pipe_kwargs = {
+            "model": model_id,
+            "torch_dtype": dtype,
+            "model_kwargs": model_kwargs
+        }
+        if device_map_val:
+            pipe_kwargs["device_map"] = device_map_val
+            
         try:
-            self.llm_pipeline = pipeline(
-                "text-generation", 
-                model=model_id, 
-                device="cuda",
-                torch_dtype=dtype,
-                model_kwargs=model_kwargs
-            )
+            if gguf_file:
+                print(f"Detected GGUF file: {gguf_file}")
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+                tokenizer = AutoTokenizer.from_pretrained(model_id, gguf_file=gguf_file, cache_dir=self.models_dir)
+                model = AutoModelForCausalLM.from_pretrained(model_id, gguf_file=gguf_file, torch_dtype=dtype, device_map=device_map_val, cache_dir=self.models_dir)
+                self.llm_pipeline = pipeline("text-generation", model=model, tokenizer=tokenizer)
+            else:
+                self.llm_pipeline = pipeline("text-generation", **pipe_kwargs)
             print("Text model loaded successfully.")
         except Exception as e:
             print(f"Failed to load text model: {e}")
             raise e
 
-    def generate_text(self, prompt: str, system_prompt: str=None, max_new_tokens: int=512, temperature: float=0.7, top_p: float=0.9, repetition_penalty: float=1.1, streamer=None, cancel_check=None) -> str:
+    def generate_text(self, messages: list, system_prompt: str=None, max_new_tokens: int=512, temperature: float=0.7, top_p: float=0.9, repetition_penalty: float=1.1, streamer=None, cancel_check=None) -> str:
         if not getattr(self, 'llm_pipeline', None):
-            return "Модель не загружена."
+            return "Текстовая модель не загружена."
             
-        messages = []
+        full_messages = []
         if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+            full_messages.append({"role": "system", "content": system_prompt})
+        full_messages.extend(messages)
         
         try:
             if hasattr(self.llm_pipeline.tokenizer, 'apply_chat_template') and self.llm_pipeline.tokenizer.chat_template is not None:
-                prompt_text = self.llm_pipeline.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                prompt_text = self.llm_pipeline.tokenizer.apply_chat_template(full_messages, tokenize=False, add_generation_prompt=True)
             else:
                 prompt_text = ""
-                if system_prompt: prompt_text += f"{system_prompt}\n\n"
-                prompt_text += f"User: {prompt}\nAssistant:"
+                for msg in full_messages:
+                    if msg['role'] == 'system':
+                        prompt_text += f"{msg['content']}\n\n"
+                    elif msg['role'] == 'user':
+                        prompt_text += f"User: {msg['content']}\n"
+                    elif msg['role'] == 'ai' or msg['role'] == 'assistant':
+                        prompt_text += f"Assistant: {msg['content']}\n"
+                prompt_text += "Assistant:"
                 
             kwargs = {
                 "max_new_tokens": max_new_tokens,

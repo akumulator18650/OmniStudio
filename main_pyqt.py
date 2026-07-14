@@ -7,6 +7,7 @@ models_dir = os.path.join(app_data_dir, "models")
 os.makedirs(models_dir, exist_ok=True)
 os.environ["HF_HOME"] = models_dir
 os.environ["HF_HUB_CACHE"] = models_dir
+os.environ["HF_HUB_MAX_WORKERS"] = "1"
 
 from dotenv import load_dotenv
 
@@ -21,7 +22,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QScrollArea, QStackedWidget, QGraphicsView, QGraphicsScene,
                              QFileDialog, QFrame, QListWidgetItem, QSizePolicy,
                              QGraphicsDropShadowEffect, QLineEdit, QCheckBox, QGridLayout,
-                             QGraphicsOpacityEffect, QMessageBox)
+                             QTreeWidget, QTreeWidgetItem, QGraphicsOpacityEffect, QMessageBox)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QPropertyAnimation, QRect, QEasingCurve, QSettings, QRectF, QEvent
 from PyQt6.QtGui import QPixmap, QIcon, QImage, QPainter, QFont, QFontDatabase, QFontMetrics, qAlpha, QKeySequence, QAction
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
@@ -43,7 +44,11 @@ def setup_logging():
             self.original_stream = original_stream
 
         def write(self, message):
-            self.original_stream.write(message)
+            if self.original_stream is not None:
+                try:
+                    self.original_stream.write(message)
+                except Exception:
+                    pass
             try:
                 with open(self.filename, "a", encoding="utf-8") as f:
                     f.write(message)
@@ -51,10 +56,14 @@ def setup_logging():
                 pass
 
         def flush(self):
-            self.original_stream.flush()
+            if self.original_stream is not None:
+                try:
+                    self.original_stream.flush()
+                except Exception:
+                    pass
 
         def isatty(self):
-            return hasattr(self.original_stream, "isatty") and self.original_stream.isatty()
+            return self.original_stream is not None and hasattr(self.original_stream, "isatty") and self.original_stream.isatty()
 
     sys.stdout = LogRedirector(log_file, sys.stdout)
     sys.stderr = LogRedirector(log_file, sys.stderr)
@@ -188,10 +197,10 @@ class TextWorker(QThread):
     text_generated = pyqtSignal(str)
     text_chunk_generated = pyqtSignal(str)
     
-    def __init__(self, engine, prompt, system_prompt=None, max_new_tokens=512, temperature=0.7, top_p=0.9, repetition_penalty=1.1):
+    def __init__(self, engine, messages, system_prompt=None, max_new_tokens=512, temperature=0.7, top_p=0.9, repetition_penalty=1.1):
         super().__init__()
         self.engine = engine
-        self.prompt = prompt
+        self.messages = messages
         self.system_prompt = system_prompt
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
@@ -212,7 +221,7 @@ class TextWorker(QThread):
                     def generate():
                         try:
                             self.engine.generate_text(
-                                self.prompt, 
+                                self.messages, 
                                 system_prompt=self.system_prompt, 
                                 max_new_tokens=self.max_new_tokens,
                                 temperature=self.temperature,
@@ -222,7 +231,7 @@ class TextWorker(QThread):
                                 cancel_check=lambda: self.is_cancelled
                             )
                         except Exception as e:
-                            pass
+                            print(f"Generation thread error: {e}")
                     
                     t = threading.Thread(target=generate)
                     t.start()
@@ -238,11 +247,11 @@ class TextWorker(QThread):
                     self.text_generated.emit(full_text)
                 except ImportError:
                     # Fallback if transformers isn't fully available
-                    result = self.engine.generate_text(self.prompt, self.system_prompt, self.max_new_tokens, self.temperature, self.top_p, self.repetition_penalty, cancel_check=lambda: self.is_cancelled)
+                    result = self.engine.generate_text(self.messages, self.system_prompt, self.max_new_tokens, self.temperature, self.top_p, self.repetition_penalty, cancel_check=lambda: self.is_cancelled)
                     self.text_generated.emit(result)
             else:
                 result = self.engine.generate_text(
-                    self.prompt, 
+                    self.messages, 
                     system_prompt=self.system_prompt, 
                     max_new_tokens=self.max_new_tokens,
                     temperature=self.temperature,
@@ -262,7 +271,7 @@ class GenerationWorker(QThread):
     generation_error = pyqtSignal(str)
     prompt_translated = pyqtSignal(str)
     
-    def __init__(self, engine, model_id, precision, vram_mode, prompt, batch_count, steps, width, height, sampler, negative_prompt, seed, denoise, cfg_scale, init_image=None, mask_image=None, use_adetailer=False, lora_id=None, lora_weight=1.0, controlnet_id=None, control_image=None, batch_size=1, output_dir=None):
+    def __init__(self, engine, model_id, precision, vram_mode, prompt, batch_count, steps, width, height, sampler, negative_prompt, seed, denoise, cfg_scale, init_image=None, mask_image=None, use_adetailer=False, lora_id=None, lora_weight=1.0, controlnet_id=None, control_image=None, rmbg_id=None, batch_size=1, output_dir=None):
         super().__init__()
         self.engine = engine
         self.model_id = model_id
@@ -287,6 +296,7 @@ class GenerationWorker(QThread):
         self.lora_weight = lora_weight
         self.controlnet_id = controlnet_id
         self.control_image_path = control_image
+        self.rmbg_id = rmbg_id
         self.is_cancelled = False
         
     def run(self):
@@ -321,6 +331,27 @@ class GenerationWorker(QThread):
                     
                 if self.is_cancelled: return
 
+            if self.rmbg_id and not self.prompt.strip() and self.init_image and os.path.exists(self.init_image):
+                try:
+                    import rembg
+                    self.progress_updated.emit(0, 100, "Удаление фона...", 0.5)
+                    with open(self.init_image, 'rb') as f:
+                        input_data = f.read()
+                    
+                    session = rembg.new_session(self.rmbg_id)
+                    output_data = rembg.remove(input_data, session=session)
+                    
+                    import uuid
+                    filename = f"rembg_{uuid.uuid4().hex[:8]}.png"
+                    out_path = os.path.join(self.output_dir, filename)
+                    with open(out_path, 'wb') as f:
+                        f.write(output_data)
+                    
+                    self.progress_updated.emit(100, 100, "Готово", 1.0)
+                    self.generation_finished.emit([out_path])
+                except Exception as e:
+                    self.generation_error.emit(f"Ошибка RMBG: {e}")
+                return
             self.engine.set_device()
             self.engine.apply_lora(self.lora_id)
             
@@ -479,6 +510,20 @@ class GenerationWorker(QThread):
                         self.progress_updated.emit(self.steps, self.steps, "ADetailer: Улучшение лица...", 1.0)
                         img = self.engine.run_adetailer(img, current_prompt, self.negative_prompt, seed_val)
                         
+                    if getattr(self, 'rmbg_id', None) and self.rmbg_id != "Отключено":
+                        self.progress_updated.emit(self.steps, self.steps, "Удаление фона...", 1.0)
+                        try:
+                            import rembg
+                            import io
+                            from PIL import Image
+                            session = rembg.new_session(self.rmbg_id)
+                            img_byte_arr = io.BytesIO()
+                            img.save(img_byte_arr, format='PNG')
+                            out_bytes = rembg.remove(img_byte_arr.getvalue(), session=session)
+                            img = Image.open(io.BytesIO(out_bytes)).convert("RGBA")
+                        except Exception as e:
+                            print(f"RMBG error: {e}")
+                            
                     path = os.path.join(self.output_dir, f"gen_{uuid.uuid4().hex}.png")
                     img.save(path)
                     output_paths.append(path)
@@ -524,24 +569,50 @@ class TqdmStream:
     def __getattr__(self, name):
         return getattr(self.original_stderr, name)
 
+class GGUFListWorker(QThread):
+    finished_signal = pyqtSignal(bool, list, str)
+    
+    def __init__(self, model_id):
+        super().__init__()
+        self.model_id = model_id
+        
+    def run(self):
+        try:
+            from huggingface_hub import HfApi
+            api = HfApi()
+            files = api.list_repo_files(repo_id=self.model_id)
+            gguf_files = [f for f in files if f.endswith('.gguf')]
+            self.finished_signal.emit(True, gguf_files, "")
+        except Exception as e:
+            self.finished_signal.emit(False, [], str(e))
+
 class ModelLoadWorker(QThread):
     progress_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool, str)
     
-    def __init__(self, engine, model_id, precision="fp16", vram_mode="high", model_type="Photo"):
+    def __init__(self, engine, model_id, precision="fp16", vram_mode="high", model_type="Photo", gguf_file=None):
         super().__init__()
         self.engine = engine
         self.model_id = model_id
         self.precision = precision
         self.vram_mode = vram_mode
         self.model_type = model_type
+        self.gguf_file = gguf_file
         
     def run(self):
         old_stderr = sys.stderr
         sys.stderr = TqdmStream(self.progress_signal)
         try:
             if self.model_type == "Text":
-                self.engine.load_text_model(self.model_id, precision=self.precision)
+                if self.gguf_file:
+                    from huggingface_hub import snapshot_download
+                    snapshot_download(
+                        repo_id=self.model_id,
+                        allow_patterns=[self.gguf_file, "*token*"],
+                        cache_dir=self.engine.models_dir,
+                        max_workers=1
+                    )
+                self.engine.load_text_model(self.model_id, precision=self.precision, vram_limit=self.vram_mode)
                 self.finished_signal.emit(True, "Текстовая модель загружена")
             else:
                 success = self.engine.load_model(self.model_id, precision=self.precision, vram_mode=self.vram_mode)
@@ -578,6 +649,29 @@ class AddonDownloadWorker(QThread):
             self.finished_signal.emit(False, str(e))
         finally:
             sys.stderr = old_stderr
+
+class RmbgDownloadWorker(QThread):
+    progress_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(bool, str)
+    
+    def __init__(self, model_id):
+        super().__init__()
+        self.model_id = model_id
+        
+    def run(self):
+        try:
+            import sys
+            if not getattr(sys, 'frozen', False):
+                self.progress_signal.emit("Установка rembg...")
+                import subprocess
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "rembg[gpu]", "onnxruntime-gpu"])
+            
+            self.progress_signal.emit(f"Скачивание модели {self.model_id}...")
+            import rembg
+            rembg.new_session(self.model_id)
+            self.finished_signal.emit(True, f"Модель {self.model_id} успешно скачана")
+        except Exception as e:
+            self.finished_signal.emit(False, str(e))
 
 class DrawingScene(QGraphicsScene):
     def __init__(self, mask_image, parent=None):
@@ -762,21 +856,9 @@ class ChatBubble(QWidget):
             self.text_layout = QVBoxLayout(self.text_container)
             self.text_layout.setContentsMargins(0,0,0,0)
             
-            self.think_btn = QPushButton("💭 Показать ход мыслей")
-            self.think_btn.setStyleSheet("text-align: left; background: transparent; color: #888888; font-weight: bold; border: none;")
-            self.think_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.think_btn.clicked.connect(self.toggle_thoughts)
-            self.think_btn.hide()
-            self.text_layout.addWidget(self.think_btn)
-            
-            self.think_lbl = QLabel()
-            self.think_lbl.setWordWrap(True)
-            self.think_lbl.setStyleSheet("color: #888888; font-size: 13px; font-style: italic; background-color: #1A1A1A; padding: 8px; border-radius: 6px;")
-            self.think_lbl.hide()
-            self.text_layout.addWidget(self.think_lbl)
-            
             self.text_lbl = QLabel()
             self.text_lbl.setWordWrap(True)
+            self.text_lbl.setTextFormat(Qt.TextFormat.RichText)
             self.text_lbl.setStyleSheet("color: white; font-size: 16px;")
             self.text_layout.addWidget(self.text_lbl)
             
@@ -793,25 +875,13 @@ class ChatBubble(QWidget):
     def set_content(self, text):
         if hasattr(self, 'text_lbl'):
             import re
-            think_match = re.search(r'<think>(.*?)(</think>|$)', text, re.DOTALL)
-            if think_match:
-                think_text = think_match.group(1).strip()
-                self.think_lbl.setText(think_text)
-                self.think_btn.show()
-                main_text = re.sub(r'<think>.*?(</think>|$)', '', text, flags=re.DOTALL).strip()
-                self.text_lbl.setText(main_text)
-            else:
-                self.text_lbl.setText(text)
-                self.think_btn.hide()
-                self.think_lbl.hide()
-                
-    def toggle_thoughts(self):
-        if self.think_lbl.isVisible():
-            self.think_lbl.hide()
-            self.think_btn.setText("💭 Показать ход мыслей")
-        else:
-            self.think_lbl.show()
-            self.think_btn.setText("💭 Скрыть ход мыслей")
+            main_text = re.sub(r'<think>.*?(</think>|$)', '', text, flags=re.DOTALL).strip()
+            # Prevent HTML injection by escaping first, or just let PyQt handle it since we control it mostly.
+            # But we must replace \n with <br> for RichText.
+            main_text = main_text.replace('<', '&lt;').replace('>', '&gt;')
+            main_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', main_text)
+            main_text = main_text.replace('\n', '<br>')
+            self.text_lbl.setText(main_text)
 
 class AnimatedTabBar(QFrame):
     tabChanged = pyqtSignal(int)
@@ -997,6 +1067,10 @@ class ClickableLabel(QLabel):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.path)
+
+class NoScrollComboBox(QComboBox):
+    def wheelEvent(self, e):
+        e.ignore()
 
 class ClickableImageLabel(QLabel):
     clicked = pyqtSignal(str)
@@ -1441,6 +1515,10 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def create_new_chat(self):
+        if hasattr(self, 'active_chat_id') and self.active_chat_id in self.chats:
+            if not self.chats[self.active_chat_id]["messages"]:
+                return
+
         chat_id = str(uuid.uuid4())
         self.chats[chat_id] = {"title": "Новый чат", "messages": []}
         self.active_chat_id = chat_id
@@ -1786,19 +1864,9 @@ class MainWindow(QMainWindow):
         text_lyt = QHBoxLayout(self.text_switches_container)
         text_lyt.setContentsMargins(5, 0, 0, 0)
         
-        think_lbl = QLabel("Thinking")
-        think_lbl.setStyleSheet("color: #888888; font-weight: 600; font-size: 13px;")
-        text_lyt.addWidget(think_lbl)
-        self.thinking_switch = ToggleSwitch()
-        text_lyt.addWidget(self.thinking_switch)
-        
-        text_lyt.addSpacing(10)
-        
-        agent_lbl = QLabel("Agent")
-        agent_lbl.setStyleSheet("color: #888888; font-weight: 600; font-size: 13px;")
-        text_lyt.addWidget(agent_lbl)
-        self.agent_switch = ToggleSwitch()
-        text_lyt.addWidget(self.agent_switch)
+        self.agent_checkbox = QCheckBox("Авто-подтверждение действий Агента")
+        self.agent_checkbox.setStyleSheet("color: #888888; font-weight: bold; font-size: 13px;")
+        text_lyt.addWidget(self.agent_checkbox)
         
         capsule_bottom.addWidget(self.text_switches_container)
         self.text_switches_container.hide()
@@ -2022,6 +2090,28 @@ class MainWindow(QMainWindow):
         
         layout.addSpacing(20)
 
+        # --- Shared Settings Container ---
+        self.shared_settings_widget = QWidget()
+        shared_layout = QVBoxLayout(self.shared_settings_widget)
+        shared_layout.setContentsMargins(0,0,0,0)
+        
+        shared_layout.addWidget(make_section_title("Общие Настройки (VRAM / Точность)"))
+        shared_layout.addWidget(make_hline())
+        
+        shared_layout.addWidget(make_label("Использование VRAM"))
+        self.vram_combo = NoScrollComboBox()
+        self.vram_combo.addItems(["Без ограничений", "24GB", "16GB", "12GB", "8GB", "6GB", "4GB"])
+        shared_layout.addWidget(self.vram_combo)
+        shared_layout.addWidget(make_hline())
+        
+        shared_layout.addWidget(make_label("Точность / Квантование"))
+        self.quant_combo = NoScrollComboBox()
+        self.quant_combo.addItems(["4-bit (Для слабых ПК)", "8-bit (Минимум VRAM)", "16-bit (Оптимально)", "32-bit (Максимум)"])
+        shared_layout.addWidget(self.quant_combo)
+        
+        layout.addWidget(self.shared_settings_widget)
+        layout.addSpacing(20)
+
         # --- Image Settings Container ---
         self.image_settings_widget = QWidget()
         img_layout = QVBoxLayout(self.image_settings_widget)
@@ -2084,11 +2174,18 @@ class MainWindow(QMainWindow):
         img_layout.addWidget(self.lora_weight)
         
         # ControlNet
-        img_layout.addWidget(make_label("Выбранный ControlNet"))
+        img_layout.addWidget(make_label("Модель ControlNet"))
         self.cnet_input = NoScrollComboBox()
-        self.cnet_input.addItem("Нет")
+        self.cnet_input.addItem("Отключено")
         self.cnet_input.currentIndexChanged.connect(self._sync_cnet_selection)
         img_layout.addWidget(self.cnet_input)
+        
+        # RMBG
+        img_layout.addWidget(make_label("Удаление фона (RMBG)"))
+        self.rmbg_input = NoScrollComboBox()
+        self.rmbg_input.addItem("Отключено")
+        self.rmbg_input.currentIndexChanged.connect(self._sync_rmbg_selection)
+        img_layout.addWidget(self.rmbg_input)
         
         img_layout.addWidget(make_hline())
         
@@ -2163,19 +2260,7 @@ class MainWindow(QMainWindow):
         
         adv_layout.addWidget(make_hline())
         
-        
-        # Quantization
-        adv_layout.addWidget(make_label("Точность / Квантование"))
-        self.quant_combo = NoScrollComboBox()
-        self.quant_combo.addItems(["4-bit (Для слабых ПК)", "8-bit (Минимум VRAM)", "16-bit (Оптимально)", "32-bit (Максимум)"])
-        adv_layout.addWidget(self.quant_combo)
         adv_layout.addWidget(make_hline())
-
-        # VRAM Mode
-        adv_layout.addWidget(make_label("Использование VRAM"))
-        self.vram_combo = NoScrollComboBox()
-        self.vram_combo.addItems(["Без ограничений (High VRAM)", "Средне (Med VRAM)", "Минимум (Low VRAM)"])
-        adv_layout.addWidget(self.vram_combo)
         img_layout.addSpacing(30)
         layout.addWidget(self.image_settings_widget)
 
@@ -2288,7 +2373,7 @@ class MainWindow(QMainWindow):
         self.seed_input.setText(str(self.settings.value("seed", "-1")))
         idx = self.quant_combo.findText(str(self.settings.value("quant", "8-bit (Минимум VRAM)")))
         if idx >= 0: self.quant_combo.setCurrentIndex(idx)
-        idx = self.vram_combo.findText(str(self.settings.value("vram", "Средне (Med VRAM)")))
+        idx = self.vram_combo.findText(str(self.settings.value("vram", "8GB")))
         if idx >= 0: self.vram_combo.setCurrentIndex(idx)
         idx = self.format_combo.findText(str(self.settings.value("format", "1:1 (Квадрат)")))
         if idx >= 0: self.format_combo.setCurrentIndex(idx)
@@ -2474,7 +2559,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(title_lbl)
         
         # Animated Tab Bar for LoRA / ControlNet
-        self.addons_cat_bar = AnimatedTabBar(["SFW LoRA", "NSFW LoRA", "ControlNet"])
+        self.addons_cat_bar = AnimatedTabBar(["SFW LoRA", "NSFW LoRA", "ControlNet", "Удаление фона"])
         self.addons_cat_bar.tabChanged.connect(self.on_addons_cat_changed)
         self.current_addons_cat = 0
         
@@ -2578,11 +2663,22 @@ class MainWindow(QMainWindow):
             placeholder = "lustlyai/Pony_Realism"
             self.addon_lora_input = custom_input
             items = self._nsfw_lora_list
-        else:
+        elif self.current_addons_cat == 2:
             addon_type = "ControlNet"
             placeholder = "xinsir/controlnet-canny-sdxl-1.0"
             self.addon_cnet_input = custom_input
             items = self._controlnet_list
+        else:
+            addon_type = "Удаление фона"
+            placeholder = "u2net"
+            self.addon_rmbg_input = custom_input
+            items = [
+                {"id": "u2net", "name": "U2Net (Универсальная)", "desc": "Стандартная модель для вырезания большинства объектов."},
+                {"id": "u2netp", "name": "U2Netp (Легкая)", "desc": "Облегченная и очень быстрая версия."},
+                {"id": "u2net_human_seg", "name": "U2Net Human", "desc": "Специализируется на людях."},
+                {"id": "isnet-anime", "name": "ISNet Anime", "desc": "Точное вырезание аниме персонажей."},
+                {"id": "isnet-general-use", "name": "ISNet General", "desc": "Продвинутая модель для сложных сцен."}
+            ]
             
         custom_input.setPlaceholderText(f"Введите HuggingFace ID {addon_type} (например: {placeholder})")
         custom_input.setStyleSheet("background-color: #0A0A0A; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px; color: white; font-size: 14px;")
@@ -2622,7 +2718,7 @@ class MainWindow(QMainWindow):
         elif self.current_addons_cat == 1:
             if not any(m['id'] == addon_id for m in self._nsfw_lora_list):
                 self._nsfw_lora_list.insert(0, entry)
-        else:
+        elif self.current_addons_cat == 2:
             if not any(m['id'] == addon_id for m in self._controlnet_list):
                 self._controlnet_list.insert(0, entry)
         self.load_addons()
@@ -2646,8 +2742,16 @@ class MainWindow(QMainWindow):
         addon_id = addon_info["id"]
         
         id_row = QHBoxLayout()
-        type_tag = "SFW LoRA" if self.current_addons_cat == 0 else "NSFW LoRA" if self.current_addons_cat == 1 else "ControlNet"
-        tag_color = "#FF9800" if self.current_addons_cat in [0, 1] else "#2196F3"
+        if self.current_addons_cat in [0, 1]:
+            type_tag = "SFW LoRA" if self.current_addons_cat == 0 else "NSFW LoRA"
+            tag_color = "#FF9800"
+        elif self.current_addons_cat == 2:
+            type_tag = "ControlNet"
+            tag_color = "#2196F3"
+        else:
+            type_tag = "Удаление фона"
+            tag_color = "#4CAF50"
+
         tag_lbl = QLabel(type_tag)
         tag_lbl.setStyleSheet(f"background-color: {tag_color}; color: #FFFFFF; font-weight: bold; font-size: 11px; padding: 3px 8px; border-radius: 6px;")
         id_row.addWidget(tag_lbl)
@@ -2670,12 +2774,17 @@ class MainWindow(QMainWindow):
         right_row = QHBoxLayout()
         right_row.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         
-        # Check if it's selected in settings
         is_active = False
-        if self.current_addons_cat in [0, 1]:
-            is_active = (getattr(self, 'selected_lora_id', None) == addon_id)
+        import os
+        is_downloaded = self._is_addon_downloaded(addon_id)
+        
+        if self.current_addons_cat == 3:
+            is_active = (getattr(self, 'selected_rmbg_id', None) == addon_id)
         else:
-            is_active = (getattr(self, 'selected_controlnet_id', None) == addon_id)
+            if self.current_addons_cat in [0, 1]:
+                is_active = (getattr(self, 'selected_lora_id', None) == addon_id)
+            else:
+                is_active = (getattr(self, 'selected_controlnet_id', None) == addon_id)
         
         is_downloading = (getattr(self, 'downloading_model_id', None) == addon_id)
         
@@ -2743,15 +2852,27 @@ class MainWindow(QMainWindow):
         if self.stack.currentIndex() == 4:
             self.load_addons()
 
+    def _sync_rmbg_selection(self, idx):
+        if idx <= 0:
+            self.selected_rmbg_id = None
+        else:
+            self.selected_rmbg_id = self.rmbg_input.itemText(idx)
+        if self.stack.currentIndex() == 4:
+            self.load_addons()
+
     def _deselect_addon(self):
         if self.current_addons_cat in [0, 1]:
             self.selected_lora_id = None
             if hasattr(self, 'lora_input') and self.lora_input is not None:
-                self.lora_input.setCurrentText("")
-        else:
+                self.lora_input.setCurrentText("Отключено")
+        elif self.current_addons_cat == 2:
             self.selected_controlnet_id = None
             if hasattr(self, 'cnet_input') and self.cnet_input is not None:
-                self.cnet_input.setCurrentText("")
+                self.cnet_input.setCurrentText("Отключено")
+        else:
+            self.selected_rmbg_id = None
+            if hasattr(self, 'rmbg_input') and self.rmbg_input is not None:
+                self.rmbg_input.setCurrentText("Отключено")
         self.load_addons()
 
     def _select_addon(self, addon_id):
@@ -2765,7 +2886,7 @@ class MainWindow(QMainWindow):
                 self.lora_input.setCurrentIndex(idx)
             self.selected_lora_id = addon_id
             self._show_toast(f"LoRA выбрана: {addon_id}")
-        else:
+        elif self.current_addons_cat == 2:
             # ControlNet
             if hasattr(self, 'cnet_input') and self.cnet_input is not None:
                 idx = self.cnet_input.findText(addon_id)
@@ -2775,6 +2896,16 @@ class MainWindow(QMainWindow):
                 self.cnet_input.setCurrentIndex(idx)
             self.selected_controlnet_id = addon_id
             self._show_toast(f"ControlNet выбран: {addon_id}")
+        else:
+            # RMBG
+            if hasattr(self, 'rmbg_input') and self.rmbg_input is not None:
+                idx = self.rmbg_input.findText(addon_id)
+                if idx < 0:
+                    self.rmbg_input.addItem(addon_id)
+                    idx = self.rmbg_input.findText(addon_id)
+                self.rmbg_input.setCurrentIndex(idx)
+            self.selected_rmbg_id = addon_id
+            self._show_toast(f"RMBG выбрана: {addon_id}")
         self.load_addons()
 
     def setup_models_tab(self):
@@ -2814,6 +2945,29 @@ class MainWindow(QMainWindow):
         self.model_search_input.textChanged.connect(self.load_models)
         layout.addWidget(self.model_search_input)
         
+        # Container for custom local model input
+        self.custom_model_container = QWidget()
+        custom_layout = QHBoxLayout(self.custom_model_container)
+        custom_layout.setContentsMargins(0, 0, 0, 10)
+        self.custom_id_input = QLineEdit()
+        self.custom_id_input.setPlaceholderText("Например: black-forest-labs/FLUX.1-schnell")
+        self.custom_id_input.setStyleSheet("background-color: #0A0A0A; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px; color: white; font-size: 15px;")
+        
+        self.custom_type_combo = QComboBox()
+        self.custom_type_combo.addItems(["Photo", "Text", "Video"])
+        self.custom_type_combo.setStyleSheet("background-color: #0A0A0A; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px; color: white; font-size: 15px;")
+        self.custom_type_combo.setFixedWidth(100)
+        
+        custom_dl_btn = QPushButton("Скачать / Добавить")
+        custom_dl_btn.setStyleSheet("background-color: #FFFFFF; color: #000000; border-radius: 8px; padding: 10px 20px; font-weight: bold;")
+        custom_dl_btn.clicked.connect(self.add_custom_model)
+        
+        custom_layout.addWidget(self.custom_id_input)
+        custom_layout.addWidget(self.custom_type_combo)
+        custom_layout.addWidget(custom_dl_btn)
+        layout.addWidget(self.custom_model_container)
+        self.custom_model_container.hide()
+        
         self.models_scroll = QScrollArea()
         self.models_scroll.setWidgetResizable(True)
         self.models_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -2827,6 +2981,7 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(self.models_scroll)
         self.current_models_cat = 0
+        self.family_selections = {}
         
     def update_models_db(self):
         self.update_models_btn.setText("Обновление... (загрузка ~300 моделей)")
@@ -2852,7 +3007,13 @@ class MainWindow(QMainWindow):
         self.current_safety_filter = idx
         self.load_models()
         
-    def create_model_card(self, model_info):
+    def on_family_version_changed(self, family_name, selected_id):
+        if not hasattr(self, 'family_selections'):
+            self.family_selections = {}
+        self.family_selections[family_name] = selected_id
+        self.load_models()
+        
+    def create_model_card(self, model_info, family_list=None, family_name=None):
         card = QFrame()
         card.setObjectName("glassPanel")
         
@@ -2863,11 +3024,25 @@ class MainWindow(QMainWindow):
         left_col.setSpacing(8)
         
         name_lbl = QLabel(model_info.get("name", model_info.get("id").split("/")[-1]))
+        if family_list and len(family_list) > 1 and family_name:
+            name_lbl.setText(f"{family_name} ({len(family_list)} версий)")
+            
         name_lbl.setWordWrap(True)
         name_lbl.setMinimumWidth(1)
         name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         name_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: white;")
         left_col.addWidget(name_lbl)
+        
+        if family_list and len(family_list) > 1 and family_name:
+            combo = NoScrollComboBox()
+            combo.setStyleSheet("background-color: #222222; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 5px; color: white; margin-bottom: 5px;")
+            for m in family_list:
+                combo.addItem(m.get("name", m.get("id").split("/")[-1]), m.get("id"))
+            idx = combo.findData(model_info["id"])
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            combo.currentIndexChanged.connect(lambda i, f=family_name, c=combo: self.on_family_version_changed(f, c.itemData(i)))
+            left_col.addWidget(combo)
         
         model_id = model_info["id"]
         id_row = QHBoxLayout()
@@ -2889,10 +3064,14 @@ class MainWindow(QMainWindow):
         icons_row.setSpacing(15)
         
         # Calculate real size
+        model_type = model_info.get("type", "Photo")
         is_downloaded = os.path.exists(os.path.join(self.engine.models_dir, f"models--{model_id.replace('/', '--')}"))
+        if model_type == "Tool":
+            is_downloaded = True
         
         if is_downloaded:
             def get_dir_size(path='.'):
+                if not os.path.exists(path): return 0
                 total = 0
                 with os.scandir(path) as it:
                     for entry in it:
@@ -2900,8 +3079,12 @@ class MainWindow(QMainWindow):
                         elif entry.is_dir(): total += get_dir_size(entry.path)
                 return total
             real_size_bytes = get_dir_size(os.path.join(self.engine.models_dir, f"models--{model_id.replace('/', '--')}"))
-            size_gb = real_size_bytes / (1024**3)
-            size_str = f"{size_gb:.2f} ГБ"
+            if real_size_bytes > 0:
+                size_gb = real_size_bytes / (1024**3)
+                size_str = f"{size_gb:.2f} ГБ"
+            else:
+                size_gb = model_info.get("size_gb", 2.0)
+                size_str = f"~{size_gb:.2f} ГБ"
         else:
             size_gb = model_info.get("size_gb", 2.0)
             size_str = f"~{size_gb:.2f} ГБ"
@@ -3021,6 +3204,8 @@ class MainWindow(QMainWindow):
         self.load_models()
 
     def select_model(self, model_id):
+        if self.model_combo.findText(model_id) == -1:
+            self.model_combo.addItem(model_id)
         self.model_combo.setCurrentText(model_id)
         self.load_models() # refresh UI so it shows "Выбрана"
             
@@ -3059,7 +3244,10 @@ class MainWindow(QMainWindow):
         size_gb = m_info.get("size_gb", 6.0) if m_info else 6.0
         
         # Check Disk Space (if not downloaded)
+        model_type = m_info.get("type", "Photo") if m_info else getattr(self, '_temp_custom_type', 'Photo')
         is_downloaded = os.path.exists(os.path.join(self.engine.models_dir, f"models--{model_id.replace('/', '--')}"))
+        if model_type == "Tool":
+            is_downloaded = True
         if not is_downloaded:
             free_disk_gb = shutil.disk_usage(self.engine.models_dir).free / (1024**3)
             if free_disk_gb < size_gb + 2.0: # 2GB buffer
@@ -3081,21 +3269,45 @@ class MainWindow(QMainWindow):
         elif "32-bit" in q_text: precision = "fp32"
         
         vram_text = self.vram_combo.currentText()
-        vram_mode = "high"
-        if "Low" in vram_text: vram_mode = "low"
-        elif "Med" in vram_text: vram_mode = "med"
+        vram_mode = "No Limit"
+        if "GB" in vram_text:
+            import re
+            m = re.search(r'(\d+GB)', vram_text)
+            if m: vram_mode = m.group(1)
         
-        # Find model type
-        model_type = "Photo"
-        for m in RECOMMENDED_MODELS:
-            if m["id"] == model_id:
-                model_type = m.get("type", "Photo")
-                break
-                
-        self.dl_worker = ModelLoadWorker(self.engine, model_id, precision, vram_mode, model_type=model_type)
+        # Find model type is already done above
+        if not is_downloaded and model_type == "Text":
+            if self._dl_widget_alive('dl_overlay') and self.dl_overlay.isVisible():
+                self.dl_status.setText("Получение списка GGUF...")
+            
+            self.gguf_worker = GGUFListWorker(model_id)
+            self.gguf_worker.finished_signal.connect(lambda ok, files, err, m_id=model_id, prec=precision, vm=vram_mode: self._on_gguf_list(ok, files, err, m_id, prec, vm))
+            self.gguf_worker.start()
+            return
+            
+        self.dl_worker = ModelLoadWorker(self.engine, model_id, precision, vram_mode, model_type=model_type, gguf_file=None)
         self.dl_worker.progress_signal.connect(self.update_dl_progress)
         self.dl_worker.finished_signal.connect(self.dl_finished)
         self.dl_worker.start()
+        
+    def _on_gguf_list(self, ok, files, err, model_id, precision, vram_mode):
+        if not ok or not files:
+            # Fallback for standard models without GGUF or on network error
+            self.dl_worker = ModelLoadWorker(self.engine, model_id, precision, vram_mode, model_type="Text", gguf_file=None)
+            self.dl_worker.progress_signal.connect(self.update_dl_progress)
+            self.dl_worker.finished_signal.connect(self.dl_finished)
+            self.dl_worker.start()
+            return
+            
+        from PyQt6.QtWidgets import QInputDialog
+        item, ok_dlg = QInputDialog.getItem(self, "Выбор формата GGUF", "Выберите формат GGUF для скачивания:", files, 0, False)
+        if ok_dlg and item:
+            self.dl_worker = ModelLoadWorker(self.engine, model_id, precision, vram_mode, model_type="Text", gguf_file=item)
+            self.dl_worker.progress_signal.connect(self.update_dl_progress)
+            self.dl_worker.finished_signal.connect(self.dl_finished)
+            self.dl_worker.start()
+        else:
+            self.dl_finished(False, "Скачивание отменено")
         
     def _dl_widget_alive(self, name):
         w = getattr(self, name, None)
@@ -3109,23 +3321,30 @@ class MainWindow(QMainWindow):
 
     def update_dl_progress(self, msg):
         import re
-        match = re.search(r'(\d+)%', msg)
-        if match:
-            pct = int(match.group(1))
+        pct_match = re.search(r'(\d+)%', msg)
+        size_match = re.search(r'([\d.]+[GM]B?/[\d.]+[GM]B?)', msg)
+        speed_match = re.search(r'([\d.]+[GM]B?/s)', msg)
+        
+        if pct_match:
+            pct = int(pct_match.group(1))
 
-            # Prevent jumping down (HuggingFace sometimes resets progress for multiple files)
             if not hasattr(self, "_dl_max_pct"):
                 self._dl_max_pct = 0
             if pct < self._dl_max_pct and (self._dl_max_pct - pct) > 20:
-                # If it dropped significantly, it's probably a new file in a multi-file download
-                pass # Just show the new file progress, but it's jumping. Actually, let's keep it simple.
+                pass 
+            else:
+                self._dl_max_pct = pct
 
             if self._dl_widget_alive("model_dl_status_lbl"):
-                # If we're at 100% or very close, call it Initialization
                 if pct > 98:
                     self.model_dl_status_lbl.setText("Инициализация...")
                 else:
-                    self.model_dl_status_lbl.setText(f"Скачивание: {pct}%")
+                    text = f"Скачивание: {pct}%"
+                    if size_match:
+                        text += f" ({size_match.group(1)})"
+                    if speed_match:
+                        text += f" @ {speed_match.group(1)}"
+                    self.model_dl_status_lbl.setText(text)
             if self._dl_widget_alive("model_dl_progress_bar"):
                 self.model_dl_progress_bar.setValue(pct)
         
@@ -3147,6 +3366,9 @@ class MainWindow(QMainWindow):
 
     def _is_addon_downloaded(self, addon_id):
         import os
+        if self.current_addons_cat == 3:
+            u2net_home = os.path.join(os.path.expanduser("~"), ".u2net")
+            return os.path.exists(os.path.join(u2net_home, f"{addon_id}.onnx"))
         from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE
         # Simplistic check if the repo folder exists in cache
         # e.g., models--ostris--ip-composition-adapter
@@ -3155,14 +3377,18 @@ class MainWindow(QMainWindow):
         return os.path.exists(cache_path)
 
     def start_addon_download(self, addon_id):
-        if hasattr(self, 'dl_worker') and self.dl_worker.isRunning():
+        if hasattr(self, 'dl_worker') and getattr(self.dl_worker, 'isRunning', lambda: False)():
             self._show_toast("Уже идет загрузка!", 3000)
             return
             
         self.downloading_model_id = addon_id
         self.load_addons()
         
-        self.dl_worker = AddonDownloadWorker(self.engine, addon_id)
+        if self.current_addons_cat == 3:
+            self.dl_worker = RmbgDownloadWorker(addon_id)
+        else:
+            self.dl_worker = AddonDownloadWorker(self.engine, addon_id)
+            
         self.dl_worker.progress_signal.connect(self.update_dl_progress)
         self.dl_worker.finished_signal.connect(self.addon_dl_finished)
         self.dl_worker.start()
@@ -3212,30 +3438,10 @@ class MainWindow(QMainWindow):
 
     def load_models(self):
         self._clear_layout(self.models_layout)
+        self.custom_model_container.setVisible(self.current_models_cat == 3)
             
         models_to_show = []
         if self.current_models_cat == 3: # Local / Custom
-            custom_layout = QHBoxLayout()
-            self.custom_id_input = QLineEdit()
-            self.custom_id_input.setPlaceholderText("Например: black-forest-labs/FLUX.1-schnell")
-            self.custom_id_input.setStyleSheet("background-color: #0A0A0A; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px; color: white; font-size: 15px;")
-            
-            custom_dl_btn = QPushButton("Скачать / Добавить")
-            custom_dl_btn.setStyleSheet("background-color: #FFFFFF; color: #000000; border-radius: 8px; padding: 10px 20px; font-weight: bold;")
-            custom_dl_btn.clicked.connect(self.add_custom_model)
-            
-            custom_layout.addWidget(self.custom_id_input)
-            custom_layout.addWidget(custom_dl_btn)
-            
-            container = QWidget()
-            container.setLayout(custom_layout)
-            self.models_layout.addWidget(container)
-            self.models_layout.addSpacing(20)
-            
-            title = QLabel("Скачанные модели (локально):")
-            title.setStyleSheet("font-family: 'Lora', serif; font-size: 18px; font-weight: bold; color: white;")
-            self.models_layout.addWidget(title)
-            
             safety_str = "SFW" if getattr(self, "current_safety_filter", 0) == 0 else "NSFW"
             
             if os.path.exists(self.engine.models_dir):
@@ -3263,17 +3469,45 @@ class MainWindow(QMainWindow):
                 if "Video" in m.get("class", "") and "type" not in m:
                     m_type = "Video"
                 
-                if m_type == cat_type and m.get("safety", "SFW") == safety_str:
+                if (m_type == cat_type or (cat_type == "Photo" and m_type == "Tool")) and m.get("safety", "SFW") == safety_str:
                     models_to_show.append(m)
             
         search_term = self.model_search_input.text().lower()
+        filtered_models = []
         for m in models_to_show:
             if search_term:
                 searchable_text = f"{m.get('name', '')} {m.get('desc', '')} {m.get('safety', '')} {m.get('class', '')}".lower()
                 if search_term not in searchable_text:
                     continue
-            self.models_layout.addWidget(self.create_model_card(m))
+            filtered_models.append(m)
             
+        # Group by family
+        families = {}
+        for m in filtered_models:
+            name = m.get("name", "Unknown")
+            family = name.split()[0]
+            if family.lower() in ("stable", "black-forest-labs", "meta-llama"): 
+                # grouping tweaks
+                if "stable video" in name.lower(): family = "Stable Video"
+                elif "stable diffusion" in name.lower() or "sdxl" in name.lower(): family = "Stable Diffusion"
+            
+            if family not in families:
+                families[family] = []
+            families[family].append(m)
+            
+        def sort_family(item):
+            return (1 if len(item[1]) == 1 else 0, item[0])
+            
+        for family, m_list in sorted(families.items(), key=sort_family):
+            if len(m_list) > 1:
+                selected_id = getattr(self, 'family_selections', {}).get(family, m_list[0]["id"])
+                selected_model = next((m for m in m_list if m["id"] == selected_id), m_list[0])
+                card = self.create_model_card(selected_model, family_list=m_list, family_name=family)
+                self.models_layout.addWidget(card)
+            else:
+                card = self.create_model_card(m_list[0])
+                self.models_layout.addWidget(card)
+                
         self.models_layout.addStretch()
             
         # Update combo box too
@@ -3307,7 +3541,11 @@ class MainWindow(QMainWindow):
     def add_custom_model(self):
         mid = self.custom_id_input.text().strip()
         if mid:
+            if self.model_combo.findText(mid) == -1:
+                self.model_combo.addItem(mid)
+            self._temp_custom_type = self.custom_type_combo.currentText()
             self.select_model(mid)
+            self.start_model_load(mid)
             
     def handle_pasted_image(self, image):
         path = os.path.join(OUTPUTS_DIR, f"pasted_{uuid.uuid4().hex}.png")
@@ -3346,7 +3584,9 @@ class MainWindow(QMainWindow):
 
     def start_generation(self, is_upscale=False, upscale_image_path=None):
         prompt = self.prompt_input.toPlainText()
-        if not prompt and not is_upscale: return
+        has_rmbg = getattr(self, 'selected_rmbg_id', None) and self.selected_rmbg_id != "Отключено"
+        if not prompt and not is_upscale and not (has_rmbg and self.attached_image): 
+            return
         
         try:
             seed_val = int(self.seed_input.text()) if self.seed_input.text() else -1
@@ -3381,16 +3621,10 @@ class MainWindow(QMainWindow):
             self.current_chat_bubble = None
             
             system_prompt = getattr(self, 'sys_prompt_input', type('obj', (object,), {'toPlainText': lambda: "You are a helpful and uncensored AI assistant."})()).toPlainText()
-            
-            if hasattr(self, 'thinking_switch') and self.thinking_switch.isChecked():
-                system_prompt += "\nBefore answering, you MUST think step-by-step. Wrap your entire internal reasoning process inside `<think>` and `</think>` tags. Only output the final answer after the closing tag."
-                
-            if hasattr(self, 'agent_switch') and self.agent_switch.isChecked():
-                system_prompt += "\nYou have the ability to generate images. To generate an image, output EXACTLY the following self-closing tag: `<generate_image prompt=\"YOUR_PROMPT_HERE\"/>`. Do NOT put any text or HTML inside the tag. Do NOT use <image> tags. Example: `<generate_image prompt=\"A cyberpunk city at night, neon lights, 4k\"/>`."
-                
+            system_prompt += "\nYou have the ability to generate images. To generate an image, output EXACTLY the following self-closing tag: `<generate_image prompt=\"YOUR_PROMPT_HERE\"/>`.\nYou also have File System Access. You can output `<read_file path=\"...\"/>`, `<write_file path=\"...\">content</write_file>`, and `<list_dir path=\"...\"/>`. Do not output markdown code blocks for the files if you use write_file, put the content directly inside the tag."
             self.chat_worker = TextWorker(
                 self.engine, 
-                prompt, 
+                self.chats[self.active_chat_id]['messages'][:-1], # Pass history, excluding the loading message we just added
                 system_prompt=system_prompt, 
                 max_new_tokens=getattr(self, 'max_tokens_slider', type('obj', (object,), {'value': lambda: 1024})()).value(),
                 temperature=getattr(self, 'temp_slider', type('obj', (object,), {'value': lambda: 7})()).value() / 10.0,
@@ -3430,6 +3664,7 @@ class MainWindow(QMainWindow):
             'lora_id': getattr(self, 'selected_lora_id', None) or '',
             'lora_weight': getattr(self, 'lora_slider', None).value() / 10.0 if hasattr(self, 'lora_slider') else 1.0,
             'use_adetailer': getattr(self, 'adetailer_check', None).isChecked() if hasattr(self, 'adetailer_check') else False,
+            'rmbg_id': getattr(self, 'selected_rmbg_id', None) or '',
             'attached_image': self.attached_image,
             'attached_mask': self.attached_mask,
             'active_chat_id': self.active_chat_id,
@@ -3593,6 +3828,73 @@ class MainWindow(QMainWindow):
         if self.active_chat_id == target_id:
             self.update_messages_ui()
 
+        is_ask_mode = True
+        if hasattr(self, 'agent_checkbox'):
+            is_ask_mode = not self.agent_checkbox.isChecked()
+            
+        import re
+        read_match = re.search(r'<read_file\s+path=["\']([^"\']+)["\']\s*/>', result_text)
+        write_match = re.search(r'<write_file\s+path=["\']([^"\']+)["\']>([\s\S]*?)</write_file>', result_text)
+        list_match = re.search(r'<list_dir\s+path=["\']([^"\']+)["\']\s*/>', result_text)
+        
+        action = None
+        path = None
+        content = None
+        
+        if write_match:
+            action = "write"
+            path = write_match.group(1)
+            content = write_match.group(2)
+        elif read_match:
+            action = "read"
+            path = read_match.group(1)
+        elif list_match:
+            action = "list"
+            path = list_match.group(1)
+            
+        if action:
+            if is_ask_mode:
+                from PyQt6.QtWidgets import QMessageBox
+                box = QMessageBox(self)
+                box.setWindowTitle("Agent Файловый Доступ")
+                box.setText(f"AI агент запрашивает:\n\nДействие: {action.upper()}\nПуть: {path}")
+                box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                box.setStyleSheet("background-color: #1A1A1A; color: white;")
+                res = box.exec()
+                allowed = (res == QMessageBox.StandardButton.Yes)
+            else:
+                allowed = True
+                    
+            import os
+            if allowed:
+                try:
+                    result_str = ""
+                    if action == "read":
+                        with open(path, 'r', encoding='utf-8') as f:
+                            result_str = f.read()
+                    elif action == "write":
+                        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+                        with open(path, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        result_str = "File written successfully."
+                    elif action == "list":
+                        items = os.listdir(path)
+                        result_str = "\n".join(items) if items else "Directory is empty."
+                except Exception as e:
+                    result_str = f"Error executing {action}: {e}"
+            else:
+                result_str = f"Action {action} on {path} was DENIED by the user."
+                
+            self.chats[target_id]['messages'].append({'role': 'system', 'content': f'Result of {action} on {path}:\n{result_str}'})
+            self.save_chats()
+            if self.active_chat_id == target_id:
+                self.update_messages_ui()
+            
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, self.start_generation)
+            return
+
+
         if gen_matches:
             image_model = self.engine.current_model_id
             if not image_model or 'Text' in str(next((m for m in RECOMMENDED_MODELS if m['id'] == image_model), {}).get('type', '')):
@@ -3618,6 +3920,7 @@ class MainWindow(QMainWindow):
                     'lora_id': '',
                     'lora_weight': 1.0,
                     'use_adetailer': False,
+                    'rmbg_id': '',
                     'attached_image': None,
                     'attached_mask': None,
                     'active_chat_id': target_id,
@@ -3669,6 +3972,7 @@ class MainWindow(QMainWindow):
             'lora_id': getattr(self, 'selected_lora_id', None) or '',
             'lora_weight': getattr(self, 'lora_slider', None).value() / 10.0 if hasattr(self, 'lora_slider') else 1.0,
             'use_adetailer': getattr(self, 'adetailer_check', None).isChecked() if hasattr(self, 'adetailer_check') else False,
+            'rmbg_id': getattr(self, 'selected_rmbg_id', None) or '',
             'attached_image': img_path,
             'attached_mask': mask_path,
             'active_chat_id': self.active_chat_id,
@@ -3813,6 +4117,7 @@ class MainWindow(QMainWindow):
             use_adetailer=task['use_adetailer'], lora_id=task['lora_id'], lora_weight=task['lora_weight'],
             controlnet_id=task.get('cnet_id') if task.get('use_cnet') else None,
             control_image=task.get('cnet_image') if task.get('use_cnet') else None,
+            rmbg_id=task.get('rmbg_id'),
             batch_size=task.get('batch_size', 1),
             output_dir=self.settings.value("output_folder", OUTPUTS_DIR)
         )

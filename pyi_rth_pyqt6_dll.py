@@ -15,8 +15,11 @@ if sys.platform == 'win32' and hasattr(sys, '_MEIPASS'):
     except (OSError, AttributeError):
         pass
 
-    # Add PyQt6/Qt6/bin which contains all Qt6*.dll files
+    # Add PyQt6/Qt6/bin which contains all Qt6*.dll files (check root and _internal)
     _qt_bin = os.path.join(_meipass, 'PyQt6', 'Qt6', 'bin')
+    if not os.path.isdir(_qt_bin):
+        _qt_bin = os.path.join(_meipass, '_internal', 'PyQt6', 'Qt6', 'bin')
+
     if os.path.isdir(_qt_bin):
         try:
             os.add_dll_directory(_qt_bin)
@@ -26,11 +29,17 @@ if sys.platform == 'win32' and hasattr(sys, '_MEIPASS'):
     # Also prepend to PATH as fallback for older Windows / edge cases
     _path = os.environ.get('PATH', '')
     _new_dirs = _meipass
+    _internal_dir = os.path.join(_meipass, '_internal')
+    if os.path.isdir(_internal_dir):
+        _new_dirs = _internal_dir + os.pathsep + _new_dirs
     if os.path.isdir(_qt_bin):
         _new_dirs = _qt_bin + os.pathsep + _new_dirs
     os.environ['PATH'] = _new_dirs + os.pathsep + _path
 
     # Set QT_PLUGIN_PATH so Qt can find platform plugins
     _qt_plugins = os.path.join(_meipass, 'PyQt6', 'Qt6', 'plugins')
+    if not os.path.isdir(_qt_plugins):
+        _qt_plugins = os.path.join(_meipass, '_internal', 'PyQt6', 'Qt6', 'plugins')
+        
     if os.path.isdir(_qt_plugins):
         os.environ['QT_PLUGIN_PATH'] = _qt_plugins
